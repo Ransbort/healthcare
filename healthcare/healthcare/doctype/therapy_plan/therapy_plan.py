@@ -69,12 +69,15 @@ def make_therapy_session(
 	service_request: str | None = None,
 	practitioner: str | None = None,
 ) -> dict:
+<<<<<<< HEAD
 	if not service_request and therapy_plan:
 		tp_doc = frappe.get_cached_doc("Therapy Plan", therapy_plan)
 		service_request = frappe.db.exists(
 			"Service Request", {"template_dn": therapy_type, "order_group": tp_doc.order_group}
 		)
 
+=======
+>>>>>>> 4f276a5 (refactor: add type hints to whitelisted methods)
 	sr_doc = None
 	if service_request:
 		if (
