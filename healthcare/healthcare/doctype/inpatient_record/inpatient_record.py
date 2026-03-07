@@ -203,7 +203,6 @@ class InpatientRecord(Document):
 							"Selling Price List not found. Please configure a valid Price List in the document."
 						)
 					)
-
 				ctx: ItemDetailsCtx = ItemDetailsCtx(
 					{
 						"doctype": "Sales Invoice",
