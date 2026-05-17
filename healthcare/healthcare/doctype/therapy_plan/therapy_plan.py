@@ -61,14 +61,14 @@ class TherapyPlan(Document):
 
 @frappe.whitelist()
 def make_therapy_session(
-	patient,
-	therapy_type,
-	company,
-	therapy_plan=None,
-	appointment=None,
-	service_request=None,
-	practitioner=None,
-):
+	patient: str,
+	therapy_type: str,
+	company: str,
+	therapy_plan: str | None = None,
+	appointment: str | None = None,
+	service_request: str | None = None,
+	practitioner: str | None = None,
+) -> dict:
 	if not service_request and therapy_plan:
 		tp_doc = frappe.get_cached_doc("Therapy Plan", therapy_plan)
 		service_request = frappe.db.exists(
