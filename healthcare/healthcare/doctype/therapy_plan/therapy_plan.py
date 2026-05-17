@@ -61,7 +61,6 @@ class TherapyPlan(Document):
 
 @frappe.whitelist()
 def make_therapy_session(
-<<<<<<< HEAD
 	patient,
 	therapy_type,
 	company,
@@ -70,22 +69,12 @@ def make_therapy_session(
 	service_request=None,
 	practitioner=None,
 ):
-=======
-	patient: str,
-	therapy_type: str,
-	company: str,
-	therapy_plan: str | None = None,
-	appointment: str | None = None,
-	service_request: str | None = None,
-	practitioner: str | None = None,
-) -> dict:
 	if not service_request and therapy_plan:
 		tp_doc = frappe.get_cached_doc("Therapy Plan", therapy_plan)
 		service_request = frappe.db.exists(
 			"Service Request", {"template_dn": therapy_type, "order_group": tp_doc.order_group}
 		)
 
->>>>>>> 657652f (fix: tharapy session fetched for billing twice when created from therapy plan)
 	sr_doc = None
 	if service_request:
 		if (
