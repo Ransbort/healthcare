@@ -218,12 +218,21 @@ class InpatientRecord(Document):
 					}
 				)
 				item_details = get_item_details(ctx)
+<<<<<<< HEAD
 
 				if not item_details.get("price_list_rate") or int(item_details.get("price_list_rate")) == 0:
 					frappe.throw(
+=======
+				price_list_rate = item_details.get("price_list_rate")
+				if price_list_rate is None or flt(price_list_rate) == 0:
+					frappe.msgprint(
+>>>>>>> be73dd7 (fix: allow ip occupancy billing at zero price list rate)
 						_(
-							f"The Item Price for '{get_link_to_form('Item', inpatient.get('item'))}' is missing or set to zero for Price List'{get_link_to_form('Price List', self.price_list or price_list)}'. Please verify the Item Price master."
-						)
+							f"Item Price for '{get_link_to_form('Item', inpatient.get('item'))}' is set to zero. Please verify."
+						),
+						alert=1,
+						indicator="warning",
+						title=_("Warning!"),
 					)
 
 				minimum_billable_qty = inpatient.get("minimum_billable_qty")
@@ -243,7 +252,7 @@ class InpatientRecord(Document):
 					se_child.stock_uom = stock_uom
 					se_child.uom = inpatient.get("uom")
 					se_child.quantity = quantity
-					se_child.rate = item_details.get("price_list_rate")
+					se_child.rate = price_list_rate
 				else:
 					if item_row.get("invoiced"):
 						# Add new row if invoiced and additional quantity exists
@@ -254,7 +263,7 @@ class InpatientRecord(Document):
 							se_child.stock_uom = stock_uom
 							se_child.uom = inpatient.get("uom")
 							se_child.quantity = quantity - item_row.get("quantity")
-							se_child.rate = item_details.get("price_list_rate")
+							se_child.rate = price_list_rate
 					else:
 						# Update existing non-invoiced item row
 						if quantity != item_row.get("quantity"):
@@ -262,7 +271,7 @@ class InpatientRecord(Document):
 								if item.name == item_row.get("name"):
 									item.uom = inpatient.get("uom")
 									item.quantity = quantity
-									item.rate = item_details.get("price_list_rate")
+									item.rate = price_list_rate
 
 			# Update inpatient occupancy billing time
 			for test in self.inpatient_occupancies:
