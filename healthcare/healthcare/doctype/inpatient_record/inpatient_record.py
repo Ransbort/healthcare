@@ -218,15 +218,12 @@ class InpatientRecord(Document):
 					}
 				)
 				item_details = get_item_details(ctx)
-<<<<<<< HEAD
 
 				if not item_details.get("price_list_rate") or int(item_details.get("price_list_rate")) == 0:
 					frappe.throw(
-=======
 				price_list_rate = item_details.get("price_list_rate")
 				if price_list_rate is None or flt(price_list_rate) == 0:
 					frappe.msgprint(
->>>>>>> be73dd7 (fix: allow ip occupancy billing at zero price list rate)
 						_(
 							f"Item Price for '{get_link_to_form('Item', inpatient.get('item'))}' is set to zero. Please verify."
 						),
