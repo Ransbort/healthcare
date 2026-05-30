@@ -218,9 +218,6 @@ class InpatientRecord(Document):
 					}
 				)
 				item_details = get_item_details(ctx)
-
-				if not item_details.get("price_list_rate") or int(item_details.get("price_list_rate")) == 0:
-					frappe.throw(
 				price_list_rate = item_details.get("price_list_rate")
 				if price_list_rate is None or flt(price_list_rate) == 0:
 					frappe.msgprint(
