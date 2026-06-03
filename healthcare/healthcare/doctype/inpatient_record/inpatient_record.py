@@ -214,20 +214,24 @@ class InpatientRecord(Document):
 						"price_list_currency": self.currency or price_list_currency,
 						"plc_conversion_rate": 1.0,
 						"conversion_rate": 1.0,
+						"qty": 1,
 					}
 				)
 				item_details = get_item_details(ctx)
-
-				if not item_details.get("price_list_rate") or int(item_details.get("price_list_rate")) == 0:
-					frappe.throw(
+				price_list_rate = item_details.get("price_list_rate")
+				if price_list_rate is None or flt(price_list_rate) == 0:
+					frappe.msgprint(
 						_(
-							f"The Item Price for '{get_link_to_form('Item', inpatient.get('item'))}' is missing or set to zero for Price List'{get_link_to_form('Price List', self.price_list or price_list)}'. Please verify the Item Price master."
-						)
+							f"Item Price for '{get_link_to_form('Item', inpatient.get('item'))}' is set to zero. Please verify."
+						),
+						alert=1,
+						indicator="warning",
+						title=_("Warning!"),
 					)
 
 				minimum_billable_qty = inpatient.get("minimum_billable_qty")
 				total_qty = (
-					(inpatient.get("total_hours") / inpatient.get("no_of_hours"))
+					(inpatient.get("total_hours") / (inpatient.get("no_of_hours") or 1))
 					if inpatient.get("total_hours")
 					else 0
 				)
@@ -242,7 +246,7 @@ class InpatientRecord(Document):
 					se_child.stock_uom = stock_uom
 					se_child.uom = inpatient.get("uom")
 					se_child.quantity = quantity
-					se_child.rate = item_details.get("price_list_rate")
+					se_child.rate = price_list_rate
 				else:
 					if item_row.get("invoiced"):
 						# Add new row if invoiced and additional quantity exists
@@ -253,7 +257,7 @@ class InpatientRecord(Document):
 							se_child.stock_uom = stock_uom
 							se_child.uom = inpatient.get("uom")
 							se_child.quantity = quantity - item_row.get("quantity")
-							se_child.rate = item_details.get("price_list_rate")
+							se_child.rate = price_list_rate
 					else:
 						# Update existing non-invoiced item row
 						if quantity != item_row.get("quantity"):
@@ -261,7 +265,7 @@ class InpatientRecord(Document):
 								if item.name == item_row.get("name"):
 									item.uom = inpatient.get("uom")
 									item.quantity = quantity
-									item.rate = item_details.get("price_list_rate")
+									item.rate = price_list_rate
 
 			# Update inpatient occupancy billing time
 			for test in self.inpatient_occupancies:
@@ -766,6 +770,7 @@ def set_item_rate(doc):
 					"price_list_currency": doc.currency or price_list_currency,
 					"plc_conversion_rate": 1.0,
 					"conversion_rate": 1.0,
+					"currency": doc.currency or price_list_currency,
 				}
 			)
 			item_details = get_item_details(ctx)
