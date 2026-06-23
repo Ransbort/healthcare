@@ -212,6 +212,7 @@ class InpatientRecord(Document):
 						"customer": frappe.db.get_value("Patient", self.patient, "customer"),
 						"selling_price_list": self.price_list or price_list,
 						"price_list_currency": self.currency or price_list_currency,
+						"currency": self.currency or price_list_currency,
 						"plc_conversion_rate": 1.0,
 						"conversion_rate": 1.0,
 						"qty": 1,
@@ -588,7 +589,7 @@ def admit_patient(
 	inpatient_record.admitted_datetime = check_in
 	inpatient_record.status = "Admitted"
 	inpatient_record.expected_discharge = expected_discharge
-	inpatient_record.currency = currency
+	inpatient_record.currency = currency or inpatient_record.currency
 	inpatient_record.price_list = price_list
 
 	inpatient_record.set("inpatient_occupancies", [])
