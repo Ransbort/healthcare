@@ -14,7 +14,7 @@ frappe.ui.form.on('Appointment Type', {
 				return {
 					filters: {'name': ['=', 'Medical Department']}
 				};
-			} else if (frm.doc.allow_booking_for === "Service Unit") {
+			} else if (frm.doc.allow_booking_for === 'Service Unit') {
 				return {
 					filters: {'name': ['=', 'Healthcare Service Unit']}
 				};
@@ -25,19 +25,19 @@ frappe.ui.form.on('Appointment Type', {
 			let child = locals[cdt][cdn];
 			if (child.dt === 'Medical Department') {
 				let item_list = doc.items
-					.filter(item => item.dt === "Medical Department" && item.dn)
+					.filter(item => item.dt === 'Medical Department' && item.dn)
 					.map(({ dn }) => dn);
 				return {
-					filters: [["Medical Department", "name", "not in", item_list]],
+					filters: [['Medical Department', 'name', 'not in', item_list]],
 				};
-			} else if (child.dt === "Healthcare Service Unit") {
+			} else if (child.dt === 'Healthcare Service Unit') {
 				let item_list = doc.items
-					.filter(item => item.dt === "Healthcare Service Unit" && item.dn)
+					.filter(item => item.dt === 'Healthcare Service Unit' && item.dn)
 					.map(({ dn }) => dn);
 				return {
 					filters: [
 						['Healthcare Service Unit', 'name', 'not in', item_list],
-						['Healthcare Service Unit', 'allow_appointments', "=", 1],
+						['Healthcare Service Unit', 'allow_appointments', '=', 1],
 					]
 				};
 			}
