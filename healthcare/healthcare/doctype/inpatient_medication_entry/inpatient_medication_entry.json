@@ -91,7 +91,8 @@
    "fieldname": "patient",
    "fieldtype": "Link",
    "label": "Patient",
-   "options": "Patient"
+   "options": "Patient",
+   "search_index": 1
   },
   {
    "depends_on": "eval:!doc.patient",
@@ -189,13 +190,19 @@
    "table_fieldname": "medication_orders"
   }
  ],
+<<<<<<< HEAD
  "modified": "2025-09-25 14:32:32.230025",
+=======
+ "modified": "2026-07-01 16:23:51.273504",
+>>>>>>> 0f42451 (fix: set missing permissions for ipmo and ipme)
  "modified_by": "Administrator",
  "module": "Healthcare",
  "name": "Inpatient Medication Entry",
+ "naming_rule": "By \"Naming Series\" field",
  "owner": "Administrator",
  "permissions": [
   {
+   "cancel": 1,
    "create": 1,
    "delete": 1,
    "email": 1,
@@ -205,6 +212,20 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Nursing User",
+   "share": 1,
+   "submit": 1,
    "write": 1
   }
  ],
