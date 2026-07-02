@@ -171,11 +171,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
-<<<<<<< HEAD
- "modified": "2020-09-30 21:53:27.128591",
-=======
  "modified": "2026-07-01 16:24:06.280931",
->>>>>>> 0f42451 (fix: set missing permissions for ipmo and ipme)
  "modified_by": "Administrator",
  "module": "Healthcare",
  "name": "Inpatient Medication Order",
