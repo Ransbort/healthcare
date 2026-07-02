@@ -190,11 +190,7 @@
    "table_fieldname": "medication_orders"
   }
  ],
-<<<<<<< HEAD
- "modified": "2025-09-25 14:32:32.230025",
-=======
  "modified": "2026-07-01 16:23:51.273504",
->>>>>>> 0f42451 (fix: set missing permissions for ipmo and ipme)
  "modified_by": "Administrator",
  "module": "Healthcare",
  "name": "Inpatient Medication Entry",
