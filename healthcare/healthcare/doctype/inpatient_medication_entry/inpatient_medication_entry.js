@@ -94,4 +94,3 @@ frappe.ui.form.on('Inpatient Medication Entry', {
 		});
 	}
 });
-
