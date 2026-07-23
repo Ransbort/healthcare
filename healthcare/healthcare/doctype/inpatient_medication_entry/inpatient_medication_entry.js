@@ -7,7 +7,29 @@ frappe.ui.form.on('Inpatient Medication Entry', {
 		frm.ignore_doctypes_on_cancel_all = ['Stock Entry'];
 		frm.fields_dict['medication_orders'].grid.wrapper.find('.grid-add-row').hide();
 
+<<<<<<< HEAD
 		frm.set_query('item_code', () => {
+=======
+		frm.set_query("patient", () => {
+			return {
+				filters: {
+					inpatient_record: ["!=", ""],
+					inpatient_status: "Admitted",
+				},
+			};
+		});
+
+		frm.set_query("patient", "medication_orders", () => {
+			return {
+				filters: {
+					inpatient_record: ["!=", ""],
+					inpatient_status: "Admitted",
+				},
+			};
+		});
+
+		frm.set_query("item_code", () => {
+>>>>>>> c60bad5 (fix(ipme): restrict IPME patient selection to admitted inpatients)
 			return {
 				filters: {
 					is_stock_item: 1
@@ -72,3 +94,4 @@ frappe.ui.form.on('Inpatient Medication Entry', {
 		});
 	}
 });
+
