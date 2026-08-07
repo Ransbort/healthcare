@@ -8,7 +8,6 @@
   "op_ip_settings",
   "sb_op_settings",
   "patient_name_by",
-  "allow_oversell_medication",
   "link_customer_to_patient",
   "default_code_system",
   "validate_nursing_checklists",
@@ -77,7 +76,12 @@
   "column_break_xvtl",
   "collect_payment",
   "no_payments_app",
-  "payments_app_is_not_installed"
+  "payments_app_is_not_installed",
+  "configuration_tab",
+  "pharmacy_section",
+  "allow_oversell_medication",
+  "pharmacy_item_group",
+  "column_break_ozql"
  ],
  "fields": [
   {
@@ -516,11 +520,32 @@
    "label": "Registration Item",
    "mandatory_depends_on": "eval:doc.collect_registration_fee == 1",
    "options": "Item"
+  },
+  {
+   "description": "Item Group shown in Pharmacy POS for walk-in/OTC items.\n",
+   "fieldname": "pharmacy_item_group",
+   "fieldtype": "Link",
+   "label": "Pharmacy Item Group",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "configuration_tab",
+   "fieldtype": "Tab Break",
+   "label": "Configuration"
+  },
+  {
+   "fieldname": "pharmacy_section",
+   "fieldtype": "Section Break",
+   "label": "Pharmacy"
+  },
+  {
+   "fieldname": "column_break_ozql",
+   "fieldtype": "Column Break"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2025-12-25 09:36:33.073374",
+ "modified": "2026-08-07 16:33:56.164238",
  "modified_by": "Administrator",
  "module": "Healthcare",
  "name": "Healthcare Settings",
