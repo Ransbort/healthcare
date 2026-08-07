@@ -8,6 +8,7 @@
   "op_ip_settings",
   "sb_op_settings",
   "patient_name_by",
+  "allow_oversell_medication",
   "link_customer_to_patient",
   "default_code_system",
   "validate_nursing_checklists",
@@ -79,6 +80,12 @@
   "payments_app_is_not_installed"
  ],
  "fields": [
+  {
+   "default": "0",
+   "fieldname": "allow_oversell_medication",
+   "fieldtype": "Check",
+   "label": "Allow Oversell Medication"
+  },
   {
    "fieldname": "sb_op_settings",
    "fieldtype": "Section Break",
