@@ -231,7 +231,33 @@
     "parent": "Healthcare",
     "parentfield": "items",
     "parenttype": "Workspace Sidebar"
-  }
+  },
+  {
+   "doctype": "Workspace Sidebar Item", 
+   "idx": 13, 
+   "type": "Link", 
+   "icon": "user-plus", 
+   "label": "Front Desk", 
+   "link_to": "front-desk", 
+   "link_type": "Page", 
+   "child": 0, 
+   "parent": "Healthcare", 
+   "parentfield": "items", 
+   "parenttype": "Workspace Sidebar"
+  },
+  {
+    "doctype": "Workspace Sidebar Item",
+    "idx": 14,
+    "type": "Link",
+    "icon": "settings",
+    "label": "Setup",
+    "link_to": "Healthcare Settings",
+    "link_type": "DocType",
+    "child": 0,
+    "parent": "Healthcare",
+    "parentfield": "items",
+    "parenttype": "Workspace Sidebar"
+    }
  ],
  "modified": "2025-11-23 19:35:30.686229",
  "modified_by": "Administrator",
