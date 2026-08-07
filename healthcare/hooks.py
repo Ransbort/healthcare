@@ -103,7 +103,7 @@ after_uninstall = "healthcare.uninstall.after_uninstall"
 # instead of needing a manual create_custom_fields() call from the console
 # each time.
 after_migrate = [
-	"healthcare.setup.make_custom_fields",
+	"healthcare.setup.create_custom_fields",
 	"healthcare.healthcare.workspace_installer.workspace_installer",
 ]
 
