@@ -5,6 +5,11 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 from erpnext.setup.utils import insert_record
 
+from healthcare.healthcare.workspace_installer import (
+	workspace_installer,
+	workspace_remover,
+)
+
 
 data = {
 	"desktop_icons": [
