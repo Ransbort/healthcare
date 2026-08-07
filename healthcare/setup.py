@@ -10,11 +10,6 @@ from healthcare.healthcare.workspace_installer import (
 	workspace_remover,
 )
 
-from healthcare.healthcare.workspace_installer import (
-	workspace_installer,
-	workspace_remover,
-)
-
 
 data = {
 	"desktop_icons": [
