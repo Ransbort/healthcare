@@ -200,7 +200,7 @@ class PharmacyPOS {
 
 		try {
 			await frappe.call({
-				method: '.pharmacy.set_pharmacy_item_group',
+				method: 'healthcare.healthcare.api.pharmacy.set_pharmacy_item_group',
 				args: { item_group }
 			});
 
@@ -236,7 +236,7 @@ class PharmacyPOS {
 					frappe.dom.freeze(__('Updating configuration...'));
 
 					await frappe.call({
-						method: '.pharmacy.set_pharmacy_item_group',
+						method: 'healthcare.healthcare.api.pharmacy.set_pharmacy_item_group',
 						args: { item_group: values.item_group }
 					});
 
@@ -1850,7 +1850,7 @@ class PharmacyPOS {
 			// item_group is whatever was configured via the setup screen /
 			// settings dialog - never hardcoded.
 			const response = await frappe.call({
-				method: '.pharmacy.get_pos_medications',
+				method: 'healthcare.healthcare.api.pharmacy.get_pos_medications',
 				args: { item_group: this.item_group }
 			});
 
