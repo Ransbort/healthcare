@@ -2888,7 +2888,7 @@ class PharmacyPOS {
 			if (med_requests_to_update.length > 0) {
 				try {
 					await frappe.call({
-						method: '.pharmacy.update_medication_requests',
+						method: 'healthcare.healthcare.api.pharmacy.update_medication_requests',
 						args: {
 							updates: med_requests_to_update,
 							allow_oversell: allow_oversell

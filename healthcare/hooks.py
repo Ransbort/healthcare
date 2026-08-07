@@ -166,7 +166,7 @@ doc_events = {
 		"validate": "healthcare.healthcare.doctype.insurance_claim.insurance_claim.validate_payment_entry_and_set_claim_fields",
 	},
 	"Medication Request": {
-		"on_submit": "healthcare.api.pharmacy.notify_new_medication_request"
+		"on_submit": "healthcare.healthcare.api.pharmacy.notify_new_medication_request"
 	}
 }
 
