@@ -3024,7 +3024,7 @@ class PharmacyPOS {
 		const header = $(`
 			<div class="orders-header-fixed">
 				<div class="orders-header">
-					<div class="cart-title" style="color: var(--text-primary);">📋 Today's Pharmacy Orders</div>
+					<div class="cart-title" style="color: var(--text-primary);">📋 Today's Orders</div>
 					<div class="daily-total">Today: ₵${daily_total.toFixed(2)}</div>
 				</div>
 			</div>
