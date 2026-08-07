@@ -6,12 +6,7 @@ import frappe
 
 def workspace_installer():
 	app_name = "healthcare"
-	# frappe.get_app_path(app_name) returns the 2-deep package path
-	# (apps/healthcare/healthcare), but workspace/*.json actually
-	# lives one level deeper, inside the module folder
-	# (apps/healthcare/healthcare/healthcare/workspace/) - this
-	# was silently finding zero files and doing nothing before.
-	workspace_dir = Path(frappe.get_app_path(app_name)) / app_name / "workspace"
+	workspace_dir = Path(frappe.get_app_path(app_name)) / app_name / "workspace_sidebar"
 
 	for workspace_file in workspace_dir.rglob("*.json"):
 		_reinstall_workspace_from_file(workspace_file)
@@ -19,7 +14,7 @@ def workspace_installer():
 
 def workspace_remover():
 	app_name = "healthcare"
-	workspace_dir = Path(frappe.get_app_path(app_name)) / app_name / "workspace"
+	workspace_dir = Path(frappe.get_app_path(app_name)) / app_name / "workspace_sidebar"
 
 	for workspace_file in workspace_dir.rglob("*.json"):
 		workspace_data = _load_workspace_data(workspace_file)
@@ -27,7 +22,7 @@ def workspace_remover():
 			continue
 		workspace_name = workspace_data.get("name") or workspace_data.get("label")
 		if workspace_name:
-			_remove_workspace(workspace_name)
+			_remove_workspace(workspace_name, workspace_data.get("doctype", "Workspace Sidebar"))
 
 
 def _reinstall_workspace_from_file(workspace_file: Path):
@@ -43,15 +38,16 @@ def _reinstall_workspace_from_file(workspace_file: Path):
 		)
 		return
 
-	_remove_workspace(workspace_name)
+	doctype = workspace_data.get("doctype", "Workspace Sidebar")
+	_remove_workspace(workspace_name, doctype)
 	_install_workspace(workspace_data, workspace_name)
 
 
-def _remove_workspace(workspace_name: str):
-	if not frappe.db.exists("Workspace", workspace_name):
+def _remove_workspace(workspace_name: str, doctype: str = "Workspace Sidebar"):
+	if not frappe.db.exists(doctype, workspace_name):
 		return
 	try:
-		frappe.delete_doc("Workspace", workspace_name, force=True, ignore_permissions=True)
+		frappe.delete_doc(doctype, workspace_name, force=True, ignore_permissions=True)
 	except Exception:
 		frappe.log_error(
 			title=f"Failed to Remove Workspace: {workspace_name}",
@@ -86,11 +82,20 @@ def _load_workspace_data(workspace_file: Path):
 		)
 		return None
 
-	if not isinstance(workspace_data, list) or not workspace_data:
+	# Accept either a single object ({...}) or a one-item array ([{...}])
+	if isinstance(workspace_data, list):
+		if not workspace_data:
+			frappe.log_error(
+				title="Invalid Workspace Structure",
+				message=f"Workspace JSON array is empty: {workspace_file}"
+			)
+			return None
+		workspace_data = workspace_data[0]
+	elif not isinstance(workspace_data, dict):
 		frappe.log_error(
 			title="Invalid Workspace Structure",
-			message=f"Workspace JSON must be a non-empty array: {workspace_file}"
+			message=f"Workspace JSON must be an object or a non-empty array: {workspace_file}"
 		)
 		return None
 
-	return workspace_data[0]
+	return workspace_data
