@@ -1,0 +1,118 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-07-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "client_name",
+  "phone",
+  "column_break_sb01",
+  "spa_type",
+  "status",
+  "section_break_sb02",
+  "booking_date",
+  "booking_time",
+  "column_break_sb03",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "SPA-BOOK-.YYYY.-",
+   "reqd": 1
+  },
+  {
+   "fieldname": "client_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Client Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Phone",
+   "options": "Phone",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_sb01",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "spa_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Spa Type",
+   "options": "Spa Type",
+   "reqd": 1
+  },
+  {
+   "default": "Scheduled",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Scheduled\nCompleted\nCancelled\nNo Show",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_sb02",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "booking_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Booking Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "booking_time",
+   "fieldtype": "Time",
+   "in_list_view": 1,
+   "label": "Booking Time",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_sb03",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-07-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Healthcare",
+ "name": "Spa Booking",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
