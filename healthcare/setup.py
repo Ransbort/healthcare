@@ -385,6 +385,22 @@ def setup_healthcare():
 	frappe.clear_cache()
 
 
+def make_custom_fields(update=True):
+	"""Re-apply the custom field definitions on every `bench migrate`.
+
+	Mirrors ex_healthcare.setup.make_custom_fields() so both apps follow
+	the same after_migrate pattern. setup_healthcare() only runs once, at
+	initial install (and skips entirely if Medical Department "Cardiology"
+	already exists), so this isolates just the custom-fields step to keep
+	`data["custom_fields"]` - including the fields merged in from
+	ex_healthcare - in sync on existing sites without re-running the full
+	one-time install (ABDM setup, seed records, etc.) on every migrate.
+	"""
+	custom_fields = data.get("custom_fields")
+	if custom_fields:
+		create_custom_fields(custom_fields, update=update)
+
+
 def setup_domain():
 	"""
 	Setup custom fields, properties, roles etc.
