@@ -6,7 +6,7 @@ import frappe
 
 def workspace_installer():
 	app_name = "healthcare"
-	workspace_dir = Path(frappe.get_app_path(app_name)) / app_name / "workspace_sidebar"
+	workspace_dir = Path(frappe.get_app_path(app_name)) / "workspace_sidebar"
 
 	for workspace_file in workspace_dir.rglob("*.json"):
 		_reinstall_workspace_from_file(workspace_file)
@@ -14,7 +14,7 @@ def workspace_installer():
 
 def workspace_remover():
 	app_name = "healthcare"
-	workspace_dir = Path(frappe.get_app_path(app_name)) / app_name / "workspace_sidebar"
+	workspace_dir = Path(frappe.get_app_path(app_name)) / "workspace_sidebar"
 
 	for workspace_file in workspace_dir.rglob("*.json"):
 		workspace_data = _load_workspace_data(workspace_file)
