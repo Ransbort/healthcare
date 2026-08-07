@@ -1837,7 +1837,7 @@ def remove_portal_settings_menu_items():
 # ---- Merged content from setup (8).py should be integrated manually ----
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
-from ex_healthcare.ex_healthcare.workspace_installer import (
+from healthcare.healthcare.workspace_installer import (
 	workspace_installer,
 	workspace_remover,
 )
