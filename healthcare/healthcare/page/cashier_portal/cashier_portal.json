@@ -1,0 +1,20 @@
+{
+ "content": null,
+ "creation": "2026-07-17 00:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2026-07-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Healthcare",
+ "name": "cashier-portal",
+ "owner": "Administrator",
+ "page_name": "cashier-portal",
+ "roles": [
+  {"role": "Cashier"},
+  {"role": "System Manager"}
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Cashier Portal"
+}
