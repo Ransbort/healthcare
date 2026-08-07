@@ -83,6 +83,18 @@ data = {
 				"read_only": True,
 				"no_copy": True,
 			},
+			# --- merged from ex_healthcare: Spa Portal ---
+			# Tags Sales Invoices created from create_spa_invoice() so
+			# get_spa_invoices() can filter to spa-originated invoices only.
+			{
+				"fieldname": "custom_invoice_from",
+				"label": "Invoice From",
+				"fieldtype": "Select",
+				"insert_after": "customer",
+				"options": "\nPharmacy\nSpa",
+				"reqd": 0,
+				"hidden": 0,
+			},
 		],
 		"Sales Invoice Item": [
 			{
@@ -259,6 +271,95 @@ data = {
 				"no_copy": True,
 			}
 		],
+		# --- merged from ex_healthcare: Pharmacy POS ---
+		# Tags the Sales Order as pharmacy-originated, links it to the
+		# dispensing Patient, and links each line item back to the
+		# Medication Request it was dispensed against.
+		"Sales Order": [
+			{
+				"fieldname": "custom_invoice_from",
+				"label": "Invoice From",
+				"fieldtype": "Select",
+				"insert_after": "customer",
+				"options": "\nPharmacy\nSpa",
+				"reqd": 0,
+				"hidden": 0,
+			},
+			{
+				"fieldname": "custom_patient",
+				"label": "Patient",
+				"fieldtype": "Link",
+				"insert_after": "custom_invoice_from",
+				"options": "Patient",
+				"reqd": 0,
+				"hidden": 0,
+			},
+		],
+		"Sales Order Item": [
+			{
+				"fieldname": "custom_reference_doctype",
+				"label": "Reference Document Type",
+				"fieldtype": "Link",
+				"insert_after": "item_name",
+				"options": "DocType",
+				"reqd": 0,
+				"hidden": 1,
+			},
+			{
+				"fieldname": "custom_reference_name",
+				"label": "Reference Name",
+				"fieldtype": "Dynamic Link",
+				"insert_after": "custom_reference_doctype",
+				"options": "custom_reference_doctype",
+				"reqd": 0,
+				"hidden": 1,
+			},
+		],
+		# --- merged from ex_healthcare: Lab Portal ---
+		# Priority on the requested test, and a link back to the Lab Test
+		# doc created once accept_lab_request() accepts it.
+		"Lab Prescription": [
+			{
+				"fieldname": "custom_priority",
+				"label": "Priority",
+				"fieldtype": "Select",
+				"insert_after": "lab_test_comment",
+				"options": "\nLow\nMedium\nHigh",
+				"reqd": 0,
+				"hidden": 0,
+			},
+			{
+				"fieldname": "custom_lab_test",
+				"label": "Lab Test",
+				"fieldtype": "Link",
+				"insert_after": "custom_priority",
+				"options": "Lab Test",
+				"reqd": 0,
+				"hidden": 0,
+			},
+		],
+		# --- merged from ex_healthcare: Rehab Portal ---
+		# Same pattern as Lab Prescription, for therapies.
+		"Therapy Plan Detail": [
+			{
+				"fieldname": "custom_priority",
+				"label": "Priority",
+				"fieldtype": "Select",
+				"insert_after": "interval",
+				"options": "\nLow\nMedium\nHigh",
+				"reqd": 0,
+				"hidden": 0,
+			},
+			{
+				"fieldname": "custom_therapy_plan",
+				"label": "Therapy Plan",
+				"fieldtype": "Link",
+				"insert_after": "custom_priority",
+				"options": "Therapy Plan",
+				"reqd": 0,
+				"hidden": 0,
+			},
+		],
 	},
 	"on_setup": "healthcare.setup.setup_healthcare",
 }
@@ -310,6 +411,9 @@ def before_uninstall():
 	"""
 	Remove Custom Fields, portal menu items, domain
 	"""
+	if data.get("custom_fields"):
+		delete_custom_fields(data.get("custom_fields"))
+
 	delete_custom_records()
 	remove_portal_settings_menu_items()
 
@@ -319,6 +423,25 @@ def before_uninstall():
 	remove_from_active_domains()
 
 	frappe.clear_cache()
+
+
+def delete_custom_fields(custom_fields: dict):
+	"""
+	Remove all Custom Fields defined in `data["custom_fields"]`, including
+	the ones merged in from ex_healthcare (Pharmacy POS, Spa Portal,
+	Lab Portal, Rehab Portal).
+
+	:param custom_fields: a dict like `{'Sales Order': [{fieldname: '', ...}]}`
+	"""
+	for doctype, fields in custom_fields.items():
+		frappe.db.delete(
+			"Custom Field",
+			{
+				"fieldname": ("in", [field["fieldname"] for field in fields]),
+				"dt": doctype,
+			},
+		)
+		frappe.clear_cache(doctype=doctype)
 
 
 def create_default_root_service_units():
