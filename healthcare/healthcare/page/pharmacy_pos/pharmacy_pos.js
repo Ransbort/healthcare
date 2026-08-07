@@ -38,7 +38,7 @@ class PharmacyPOS {
 			frappe.dom.freeze(__('Loading Pharmacy POS...'));
 
 			const response = await frappe.call({
-				method: 'healthcare.api.pharmacy.get_pharmacy_settings'
+				method: 'healthcare.healthcare.api.pharmacy.get_pharmacy_settings'
 			});
 
 			frappe.dom.unfreeze();
@@ -200,7 +200,7 @@ class PharmacyPOS {
 
 		try {
 			await frappe.call({
-				method: 'healthcare.api.pharmacy.set_pharmacy_item_group',
+				method: '.pharmacy.set_pharmacy_item_group',
 				args: { item_group }
 			});
 
@@ -236,7 +236,7 @@ class PharmacyPOS {
 					frappe.dom.freeze(__('Updating configuration...'));
 
 					await frappe.call({
-						method: 'healthcare.api.pharmacy.set_pharmacy_item_group',
+						method: '.pharmacy.set_pharmacy_item_group',
 						args: { item_group: values.item_group }
 					});
 
@@ -1850,7 +1850,7 @@ class PharmacyPOS {
 			// item_group is whatever was configured via the setup screen /
 			// settings dialog - never hardcoded.
 			const response = await frappe.call({
-				method: 'healthcare.api.pharmacy.get_pos_medications',
+				method: '.pharmacy.get_pos_medications',
 				args: { item_group: this.item_group }
 			});
 
@@ -2888,7 +2888,7 @@ class PharmacyPOS {
 			if (med_requests_to_update.length > 0) {
 				try {
 					await frappe.call({
-						method: 'healthcare.api.pharmacy.update_medication_requests',
+						method: '.pharmacy.update_medication_requests',
 						args: {
 							updates: med_requests_to_update,
 							allow_oversell: allow_oversell
@@ -3128,7 +3128,7 @@ class PharmacyPOS {
 			if (!barcode) return;
 
 			const response = await frappe.call({
-				method: 'healthcare.api.pharmacy.get_item_by_barcode',
+				method: '.pharmacy.get_item_by_barcode',
 				args: {
 					barcode: barcode
 				}
