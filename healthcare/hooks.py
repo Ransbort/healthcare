@@ -86,6 +86,27 @@ after_install = "healthcare.setup.setup_healthcare"
 before_uninstall = "healthcare.uninstall.before_uninstall"
 after_uninstall = "healthcare.uninstall.after_uninstall"
 
+# Migration
+# ------------
+# Re-installs the workspace(s) defined under
+# apps/healthcare/healthcare/healthcare/workspace/*.json on every
+# `bench migrate`. Without this, editing a workspace JSON (adding/removing
+# shortcuts or links) never takes effect until someone manually calls
+# workspace_installer() from the bench console.
+#
+# make_custom_fields also re-runs here for the same reason: after_install
+# only fires once, at initial app install. Any custom field added to
+# setup.py's get_custom_fields() dict *after* the app was already installed
+# (custom_department, custom_invoice, etc.) would otherwise never get
+# created on existing sites - only a brand-new install would pick it up.
+# Running it on every migrate makes schema changes apply automatically
+# instead of needing a manual create_custom_fields() call from the console
+# each time.
+after_migrate = [
+	"healthcare.healthcare.setup.make_custom_fields",
+	"healthcare.healthcare.workspace_installer.workspace_installer",
+]
+
 # Desk Notifications
 # ------------------
 # See frappe.core.notifications.get_notification_config
@@ -132,11 +153,21 @@ doc_events = {
 		"on_trash": "healthcare.healthcare.utils.company_on_trash",
 	},
 	"Patient": {"after_insert": "healthcare.regional.india.abdm.utils.set_consent_attachment_details"},
+	"Patient Encounter": {
+		"on_submit": "healthcare.healthcare.page.front_desk.front_desk.on_patient_encounter_submit",
+		"on_update": "healthcare.healthcare.page.lab_portal.lab_portal.notify_new_lab_requests"
+	},
 	"Payment Entry": {
-		"on_submit": "healthcare.healthcare.custom_doctype.payment_entry.manage_payment_entry_submit_cancel",
+		"on_submit": [
+			"healthcare.healthcare.custom_doctype.payment_entry.manage_payment_entry_submit_cancel",
+			"healthcare.healthcare.page.front_desk.front_desk.on_payment_entry_submit"
+		],
 		"on_cancel": "healthcare.healthcare.custom_doctype.payment_entry.manage_payment_entry_submit_cancel",
 		"validate": "healthcare.healthcare.doctype.insurance_claim.insurance_claim.validate_payment_entry_and_set_claim_fields",
 	},
+	"Medication Request": {
+		"on_submit": "healthcare.api.pharmacy.notify_new_medication_request"
+	}
 }
 
 scheduler_events = {
