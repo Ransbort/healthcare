@@ -152,19 +152,7 @@ doc_events = {
 		"after_insert": "healthcare.healthcare.utils.create_healthcare_service_unit_tree_root",
 		"on_trash": "healthcare.healthcare.utils.company_on_trash",
 	},
-	"Patient": {
-		"after_insert": [
-			"healthcare.regional.india.abdm.utils.set_consent_attachment_details",
-			# Raises the registration-fee Sales Invoice (as a draft) when
-			# Healthcare Settings has "Collect Fee for Patient Registration"
-			# checked, and Patient.after_insert() has already disabled the
-			# patient. Fires for every creation path — Front Desk, the
-			# standard Desk quick-entry/full form, or the API — not just
-			# one endpoint. See healthcare.healthcare.page.front_desk.front_desk
-			# for the full rationale (why it's a draft, how it's paid off).
-			"healthcare.healthcare.page.front_desk.front_desk.on_patient_after_insert",
-		]
-	},
+	"Patient": {"after_insert": "healthcare.regional.india.abdm.utils.set_consent_attachment_details"},
 	"Patient Encounter": {
 		"on_submit": "healthcare.healthcare.page.front_desk.front_desk.on_patient_encounter_submit",
 		"on_update": "healthcare.healthcare.page.lab_portal.lab_portal.notify_new_lab_requests"
