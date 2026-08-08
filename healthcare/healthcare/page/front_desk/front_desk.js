@@ -314,35 +314,35 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 
 	let np_last_name = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_last_name"]'),
-		df: { fieldtype: 'Data', fieldname: 'np_last_name', label: 'Last Name', reqd: 1 },
+		df: { fieldtype: 'Data', fieldname: 'np_last_name', label: 'Last Name' },
 		render_input: true
 	});
 	np_last_name.refresh();
 
 	let np_mobile = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_mobile"]'),
-		df: { fieldtype: 'Data', fieldname: 'np_mobile', label: 'Mobile', options: 'Phone', reqd: 1 },
+		df: { fieldtype: 'Data', fieldname: 'np_mobile', label: 'Mobile', options: 'Phone' },
 		render_input: true
 	});
 	np_mobile.refresh();
 
 	let np_gender = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_gender"]'),
-		df: { fieldtype: 'Select', fieldname: 'np_gender', label: 'Gender', options: 'Male\nFemale\nOther', reqd: 1 },
+		df: { fieldtype: 'Select', fieldname: 'np_gender', label: 'Gender', options: 'Male\nFemale\nOther' },
 		render_input: true
 	});
 	np_gender.refresh();
 
 	let np_dob = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_dob"]'),
-		df: { fieldtype: 'Date', fieldname: 'np_dob', label: 'Date of Birth', reqd: 1 },
+		df: { fieldtype: 'Date', fieldname: 'np_dob', label: 'Date of Birth' },
 		render_input: true
 	});
 	np_dob.refresh();
 
 	let np_uid = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_uid"]'),
-		df: { fieldtype: 'Data', fieldname: 'np_uid', label: 'Identification Number (UID)', reqd: 1 },
+		df: { fieldtype: 'Data', fieldname: 'np_uid', label: 'Identification Number (UID)' },
 		render_input: true
 	});
 	np_uid.refresh();
@@ -461,71 +461,22 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	});
 
 	// Register new patient
-	function getMissingRequiredFields() {
-		const checks = [
-			[np_first_name, __('First Name')],
-			[np_last_name, __('Last Name')],
-			[np_mobile, __('Mobile')],
-			[np_gender, __('Gender')],
-			[np_dob, __('Date of Birth')],
-			[np_uid, __('Identification Number (UID)')]
-		];
-		return checks.filter(function(pair) { return !pair[0].get_value(); }).map(function(pair) { return pair[1]; });
-	}
-
-	// Shows every field the staff just entered plus the actual invoice
-	// amount, so the fee is never raised silently as a side effect of
-	// clicking Register.
-	function showRegistrationFeeConfirm(payload, feeInfo, onConfirm) {
-		const fullName = [payload.first_name, payload.last_name].filter(Boolean).join(' ');
-
-		const dialog = new frappe.ui.Dialog({
-			title: __('Confirm Patient Registration'),
-			fields: [{ fieldtype: 'HTML', fieldname: 'summary_html' }],
-			primary_action_label: __('Confirm & Register'),
-			primary_action: function() {
-				dialog.hide();
-				onConfirm();
-			},
-			secondary_action_label: __('Cancel')
-		});
-
-		const rows = [
-			[__('Patient'), fullName],
-			[__('Mobile'), payload.mobile],
-			[__('Gender'), payload.gender],
-			[__('Date of Birth'), payload.dob ? frappe.datetime.str_to_user(payload.dob) : ''],
-			[__('Identification Number (UID)'), payload.uid]
-		];
-
-		const rowsHtml = rows.map(function(pair) {
-			return `
-				<tr>
-					<td style="padding:9px 20px 9px 0; color:#6b7280; font-size:0.85em; white-space:nowrap; width:1%;">${pair[0]}</td>
-					<td style="padding:9px 0; font-weight:600; color:#1f2937;">${frappe.utils.escape_html(pair[1] || '—')}</td>
-				</tr>`;
-		}).join('');
-
-		dialog.fields_dict.summary_html.$wrapper.html(`
-			<table style="width:100%; border-collapse:collapse;">
-				<tbody style="border-bottom:1px solid #e5e7eb;">${rowsHtml}</tbody>
-				<tr>
-					<td style="padding:12px 20px 4px 0; color:#6b7280; font-size:0.85em;">${__('Registration Fee')}</td>
-					<td style="padding:12px 0 4px; font-weight:700; font-size:1.15em; color:#1f2937;">${frappe.format(feeInfo.registration_fee, { fieldtype: 'Currency' })}</td>
-				</tr>
-			</table>
-			<div style="margin-top:14px; background:#fff7ed; border:1px solid #fed7aa; border-radius:6px; padding:10px 12px; color:#9a3412; font-size:0.85em; line-height:1.4;">
-				${__('The patient will be registered as Disabled and a registration fee invoice will be raised immediately. They will stay blocked from check-in until that invoice is paid at the Cashier Portal.')}
-			</div>
-		`);
-
-		dialog.show();
-	}
-
-	function registerPatient(payload) {
+	page.main.find('#register-patient-btn').on('click', function() {
+		const first = np_first_name.get_value();
+		if (!first) {
+			frappe.show_alert({ message: __('First name is required'), indicator: 'orange' }, 5);
+			return;
+		}
 		frappe.call({
 			method: 'healthcare.healthcare.page.front_desk.front_desk.create_walkin_patient',
-			args: payload,
+			args: {
+				first_name: first,
+				last_name: np_last_name.get_value(),
+				mobile: np_mobile.get_value(),
+				gender: np_gender.get_value(),
+				dob: np_dob.get_value(),
+				uid: np_uid.get_value()
+			},
 			freeze: true,
 			freeze_message: __('Registering patient...'),
 			callback: function(r) {
@@ -548,35 +499,6 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 					page.main.find('#new-patient-block').hide();
 					ci_patient.set_value(registeredPatient);
 					checkPatientRegistrationStatus(registeredPatient);
-				}
-			}
-		});
-	}
-
-	page.main.find('#register-patient-btn').on('click', function() {
-		const missing = getMissingRequiredFields();
-		if (missing.length) {
-			frappe.show_alert({ message: __('Please fill in: {0}', [missing.join(', ')]), indicator: 'orange' }, 6);
-			return;
-		}
-
-		const payload = {
-			first_name: np_first_name.get_value(),
-			last_name: np_last_name.get_value(),
-			mobile: np_mobile.get_value(),
-			gender: np_gender.get_value(),
-			dob: np_dob.get_value(),
-			uid: np_uid.get_value()
-		};
-
-		frappe.call({
-			method: 'healthcare.healthcare.page.front_desk.front_desk.get_registration_fee_info',
-			callback: function(r) {
-				const feeInfo = r.message || { collect_registration_fee: false, registration_fee: 0 };
-				if (feeInfo.collect_registration_fee) {
-					showRegistrationFeeConfirm(payload, feeInfo, function() { registerPatient(payload); });
-				} else {
-					registerPatient(payload);
 				}
 			}
 		});

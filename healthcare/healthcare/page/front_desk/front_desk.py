@@ -1,6 +1,6 @@
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, nowdate, nowtime, add_to_date, flt
+from frappe.utils import now_datetime, nowdate, nowtime, add_to_date
 
 
 # =============================================
@@ -71,60 +71,19 @@ def bulk_send_to_nurse(encounters):
 # =============================================
 
 @frappe.whitelist()
-def get_registration_fee_info():
-	"""Whether Healthcare Settings is currently set up to collect a
-	registration fee, and how much - so the front desk can show a
-	confirmation dialog with the real amount *before* create_walkin_patient()
-	goes ahead and raises the invoice, instead of it happening silently."""
-
-	collect_fee = bool(frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"))
-	fee = frappe.db.get_single_value("Healthcare Settings", "registration_fee") if collect_fee else 0
-
-	return {
-		"collect_registration_fee": collect_fee,
-		"registration_fee": flt(fee),
-	}
-
-
-@frappe.whitelist()
 def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, dob=None, uid=None):
 	"""Register a brand-new walk-in patient.
 
-	All of first/last name, mobile, gender, dob and uid are mandatory -
-	enforced here as well as in the front-end, since this is a whitelisted
-	endpoint any client could call directly.
-
 	If Healthcare Settings has "Collect Fee for Patient Registration"
 	checked, Patient.after_insert() has already flipped this record to
-	status=Disabled (see healthcare/patient.py), and our own
-	on_patient_after_insert() hook (wired in hooks.py against Patient's
-	after_insert, alongside the app's existing set_consent_attachment_details
-	handler) has already raised the registration-fee invoice, all before
-	patient.insert() below even returns - Frappe runs doc_event hooks
-	synchronously as part of the same insert() call. We just look up
-	whatever it created so we can hand the invoice number back to the UI.
-
-	Raising the invoice from that doc-event hook - rather than only here -
-	means it fires no matter how the Patient gets created: through this
-	Front Desk form, the standard Desk "+ Create a new Patient" quick-entry
-	on any Link field, the full Patient form, or the API - not just this
-	one endpoint.
+	status=Disabled (see healthcare/patient.py). We pick up from there
+	and raise the registration-fee invoice immediately, so the front
+	desk has something to hand the patient rather than a silently
+	disabled record. The patient stays Disabled - and blocked from
+	check-in (see _ensure_patient_enabled below) - until that invoice
+	is paid off, at which point on_payment_entry_submit() re-enables
+	them.
 	"""
-
-	missing = [
-		label
-		for value, label in [
-			(first_name, _("First Name")),
-			(last_name, _("Last Name")),
-			(mobile, _("Mobile")),
-			(gender, _("Gender")),
-			(dob, _("Date of Birth")),
-			(uid, _("Identification Number (UID)")),
-		]
-		if not value
-	]
-	if missing:
-		frappe.throw(_("Please fill in the following fields: {0}").format(", ".join(missing)))
 
 	patient = frappe.get_doc({
 		"doctype": "Patient",
@@ -138,16 +97,9 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 
 	patient.insert(ignore_permissions=True)
 
-	registration_invoice = frappe.db.get_value(
-		"Sales Invoice Item",
-		{
-			"reference_dt": "Patient",
-			"reference_dn": patient.name,
-			"item_name": "Registration Fee",
-			"docstatus": 0,
-		},
-		"parent",
-	)
+	registration_invoice = None
+	if frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"):
+		registration_invoice = _raise_registration_invoice(patient)
 
 	return {
 		"status": "Success",
@@ -158,36 +110,30 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 	}
 
 
-def on_patient_after_insert(doc, method=None):
-	"""Patient doc-event hook - wire up in hooks.py against Patient's
-	after_insert, as an addition to the app's existing
-	set_consent_attachment_details handler for that same event.
+def _raise_registration_invoice(patient):
+	"""Create (or reuse) the registration-fee Sales Invoice for `patient`
+	and make sure it's submitted so it actually shows up as payable at
+	the Cashier Portal.
 
-	Frappe calls a doctype's own controller after_insert() (which is
-	where Patient.after_insert() in patient.py sets status=Disabled and
-	reloads) before it dispatches these doc_event hooks, so `doc.status`
-	here already reflects that.
-
-	Raising the invoice here rather than only inside
-	create_walkin_patient() above means it happens no matter how the
-	Patient was created - not just through the Front Desk page.
-
-	Left as a draft, deliberately: hooks.py already wires Sales Invoice's
-	on_submit to healthcare.healthcare.utils.manage_invoice_submit_cancel,
-	which (per the app's existing POS-style invoicing design) treats
-	submission itself as proof of payment and would re-enable the linked
-	Patient right then - before any Payment Entry, and before money has
-	actually changed hands. The Cashier Portal is responsible for
-	submitting this invoice (the same way it already handles
-	Pharmacy/Lab/Rehab invoices) once payment is actually collected;
-	on_payment_entry_submit() below - tied to a real Payment Entry - is
-	what re-enables the patient.
+	Patient.invoice_patient_registration() already does the fee/item
+	lookup and de-dupes against an existing draft invoice for this
+	patient, but it leaves the invoice in draft (docstatus=0) - submit
+	it here ourselves, same as _create_consultation_invoice() does for
+	consultation fees below.
 	"""
 
-	if not frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"):
-		return
+	invoice_dict = patient.invoice_patient_registration()
+	if not invoice_dict:
+		# No registration_fee configured in Healthcare Settings even
+		# though the "collect fee" checkbox is on - nothing to invoice,
+		# so leave the patient exactly as after_insert() left them.
+		return None
 
-	doc.invoice_patient_registration()
+	invoice = frappe.get_doc("Sales Invoice", invoice_dict.get("name"))
+	if invoice.docstatus == 0:
+		invoice.submit()
+
+	return invoice.name
 
 
 def _ensure_patient_enabled(patient):
