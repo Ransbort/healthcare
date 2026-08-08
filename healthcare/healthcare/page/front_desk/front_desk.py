@@ -1,6 +1,6 @@
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, nowdate, nowtime, add_to_date
+from frappe.utils import now_datetime, nowdate, nowtime, add_to_date, flt
 
 
 # =============================================
@@ -71,8 +71,28 @@ def bulk_send_to_nurse(encounters):
 # =============================================
 
 @frappe.whitelist()
+def get_registration_fee_info():
+	"""Whether Healthcare Settings is currently set up to collect a
+	registration fee, and how much - so the front desk can show a
+	confirmation dialog with the real amount *before* create_walkin_patient()
+	goes ahead and raises the invoice, instead of it happening silently."""
+
+	collect_fee = bool(frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"))
+	fee = frappe.db.get_single_value("Healthcare Settings", "registration_fee") if collect_fee else 0
+
+	return {
+		"collect_registration_fee": collect_fee,
+		"registration_fee": flt(fee),
+	}
+
+
+@frappe.whitelist()
 def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, dob=None, uid=None):
 	"""Register a brand-new walk-in patient.
+
+	All of first/last name, mobile, gender, dob and uid are mandatory -
+	enforced here as well as in the front-end, since this is a whitelisted
+	endpoint any client could call directly.
 
 	If Healthcare Settings has "Collect Fee for Patient Registration"
 	checked, Patient.after_insert() has already flipped this record to
@@ -84,6 +104,21 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 	is paid off, at which point on_payment_entry_submit() re-enables
 	them.
 	"""
+
+	missing = [
+		label
+		for value, label in [
+			(first_name, _("First Name")),
+			(last_name, _("Last Name")),
+			(mobile, _("Mobile")),
+			(gender, _("Gender")),
+			(dob, _("Date of Birth")),
+			(uid, _("Identification Number (UID)")),
+		]
+		if not value
+	]
+	if missing:
+		frappe.throw(_("Please fill in the following fields: {0}").format(", ".join(missing)))
 
 	patient = frappe.get_doc({
 		"doctype": "Patient",
@@ -111,15 +146,22 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 
 
 def _raise_registration_invoice(patient):
-	"""Create (or reuse) the registration-fee Sales Invoice for `patient`
-	and make sure it's submitted so it actually shows up as payable at
-	the Cashier Portal.
+	"""Create (or reuse) the registration-fee Sales Invoice for `patient`.
 
-	Patient.invoice_patient_registration() already does the fee/item
-	lookup and de-dupes against an existing draft invoice for this
-	patient, but it leaves the invoice in draft (docstatus=0) - submit
-	it here ourselves, same as _create_consultation_invoice() does for
-	consultation fees below.
+	Patient.invoice_patient_registration() does the fee/item lookup and
+	de-dupes against an existing draft invoice for this patient, and
+	deliberately leaves it in draft (docstatus=0) - do NOT submit it
+	here. hooks.py already wires Sales Invoice's on_submit to
+	healthcare.healthcare.utils.manage_invoice_submit_cancel, which (per
+	the app's existing design for POS-style invoicing) treats submission
+	itself as proof of payment and re-enables the linked Patient right
+	then - before any Payment Entry, and before money has actually
+	changed hands. Submitting here caused exactly that: patients turning
+	Active the instant they were registered. Leave the invoice as a
+	draft; the Cashier Portal is responsible for submitting it (the same
+	way it already handles Pharmacy/Lab/Rehab invoices) once payment is
+	actually collected, and our own _enable_patient_after_registration_payment
+	below - tied to a real Payment Entry - is what re-enables the patient.
 	"""
 
 	invoice_dict = patient.invoice_patient_registration()
@@ -129,11 +171,7 @@ def _raise_registration_invoice(patient):
 		# so leave the patient exactly as after_insert() left them.
 		return None
 
-	invoice = frappe.get_doc("Sales Invoice", invoice_dict.get("name"))
-	if invoice.docstatus == 0:
-		invoice.submit()
-
-	return invoice.name
+	return invoice_dict.get("name")
 
 
 def _ensure_patient_enabled(patient):

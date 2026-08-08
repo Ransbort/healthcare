@@ -149,7 +149,8 @@
    "fieldtype": "Date",
    "in_preview": 1,
    "label": "Date of birth",
-   "no_copy": 1
+   "no_copy": 1,
+   "reqd": 1
   },
   {
    "fieldname": "age_html",
@@ -202,6 +203,7 @@
    "options": "\nEmail\nPrint"
   },
   {
+   "allow_in_quick_entry": 1,
    "bold": 1,
    "fieldname": "mobile",
    "fieldtype": "Data",
@@ -374,10 +376,12 @@
    "options": "Currency"
   },
   {
+   "allow_in_quick_entry": 1,
    "fieldname": "last_name",
    "fieldtype": "Data",
    "label": "Last Name",
-   "no_copy": 1
+   "no_copy": 1,
+   "reqd": 1
   },
   {
    "fieldname": "first_name",
@@ -476,6 +480,7 @@
    "fieldtype": "Data",
    "in_standard_filter": 1,
    "label": "Identification Number (UID)",
+   "reqd": 1,
    "unique": 1
   },
   {
@@ -622,10 +627,11 @@
   }
  ],
  "max_attachments": 50,
- "modified": "2026-06-18 13:50:07.543590",
+ "modified": "2026-08-08 21:40:34.435696",
  "modified_by": "Administrator",
  "module": "Healthcare",
  "name": "Patient",
+ "naming_rule": "By \"Naming Series\" field",
  "owner": "Administrator",
  "permissions": [
   {
