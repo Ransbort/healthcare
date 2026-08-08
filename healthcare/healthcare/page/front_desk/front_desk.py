@@ -71,8 +71,19 @@ def bulk_send_to_nurse(encounters):
 # =============================================
 
 @frappe.whitelist()
-def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, dob=None):
-	"""Register a brand-new walk-in patient."""
+def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, dob=None, uid=None):
+	"""Register a brand-new walk-in patient.
+
+	If Healthcare Settings has "Collect Fee for Patient Registration"
+	checked, Patient.after_insert() has already flipped this record to
+	status=Disabled (see healthcare/patient.py). We pick up from there
+	and raise the registration-fee invoice immediately, so the front
+	desk has something to hand the patient rather than a silently
+	disabled record. The patient stays Disabled - and blocked from
+	check-in (see _ensure_patient_enabled below) - until that invoice
+	is paid off, at which point on_payment_entry_submit() re-enables
+	them.
+	"""
 
 	patient = frappe.get_doc({
 		"doctype": "Patient",
@@ -81,15 +92,74 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 		"mobile": mobile,
 		"sex": gender,
 		"dob": dob,
+		"uid": uid,
 	})
 
 	patient.insert(ignore_permissions=True)
 
+	registration_invoice = None
+	if frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"):
+		registration_invoice = _raise_registration_invoice(patient)
+
 	return {
 		"status": "Success",
 		"patient": patient.name,
-		"patient_name": patient.patient_name
+		"patient_name": patient.patient_name,
+		"registration_invoice": registration_invoice,
+		"patient_status": frappe.db.get_value("Patient", patient.name, "status"),
 	}
+
+
+def _raise_registration_invoice(patient):
+	"""Create (or reuse) the registration-fee Sales Invoice for `patient`
+	and make sure it's submitted so it actually shows up as payable at
+	the Cashier Portal.
+
+	Patient.invoice_patient_registration() already does the fee/item
+	lookup and de-dupes against an existing draft invoice for this
+	patient, but it leaves the invoice in draft (docstatus=0) - submit
+	it here ourselves, same as _create_consultation_invoice() does for
+	consultation fees below.
+	"""
+
+	invoice_dict = patient.invoice_patient_registration()
+	if not invoice_dict:
+		# No registration_fee configured in Healthcare Settings even
+		# though the "collect fee" checkbox is on - nothing to invoice,
+		# so leave the patient exactly as after_insert() left them.
+		return None
+
+	invoice = frappe.get_doc("Sales Invoice", invoice_dict.get("name"))
+	if invoice.docstatus == 0:
+		invoice.submit()
+
+	return invoice.name
+
+
+def _ensure_patient_enabled(patient):
+	"""Block check-in for a patient who still owes the registration
+	fee. Enforced server-side (not just hidden/disabled in the UI) so
+	a stale page or a direct API call can't skip payment."""
+
+	status = frappe.db.get_value("Patient", patient, "status")
+	if status == "Disabled":
+		frappe.throw(
+			_(
+				"Patient {0} still owes the registration fee. Please collect "
+				"payment at the Cashier Portal before checking them in."
+			).format(patient)
+		)
+
+
+@frappe.whitelist()
+def get_patient_checkin_status(patient):
+	"""Whether `patient` is currently blocked from check-in pending
+	registration fee payment, so the front desk can warn about it
+	before staff even try to check the patient in (rather than only
+	finding out from the server error raised by _ensure_patient_enabled)."""
+
+	status = frappe.db.get_value("Patient", patient, "status")
+	return {"status": status, "registration_fee_pending": status == "Disabled"}
 
 
 DEFAULT_APPOINTMENT_DURATION_MINUTES = 15
@@ -265,6 +335,8 @@ def check_in_appointment(appointment, consultation_fee=0):
 
 	appt = frappe.get_doc("Patient Appointment", appointment)
 
+	_ensure_patient_enabled(appt.patient)
+
 	# Idempotency: if this appointment was already checked in, don't
 	# spin up a second Encounter — just hand back the existing one.
 	existing = frappe.db.get_value("Patient Encounter", {"appointment": appt.name}, "name")
@@ -308,6 +380,8 @@ def create_walkin_encounter(patient, practitioner, appointment_type, department=
 	appointment_type is required because Patient Encounter itself has it
 	as a mandatory field with no Patient Appointment to inherit it from.
 	"""
+
+	_ensure_patient_enabled(patient)
 
 	patient_name, practitioner_name = _patient_and_practitioner_names(patient, practitioner)
 
@@ -420,19 +494,55 @@ def on_payment_entry_submit(doc, method=None):
 		if outstanding != 0:
 			continue
 
-		encounter_name = frappe.db.get_value(
-			"Patient Encounter",
-			{"consultation_invoice": ref.reference_name, "queue_status": "Payment Pending"},
-			"name",
-		)
-		if encounter_name:
-			frappe.db.set_value("Patient Encounter", encounter_name, "queue_status", "Paid - Awaiting Vitals")
-			patient_name = frappe.db.get_value("Patient Encounter", encounter_name, "patient_name")
-			_notify("queue_update", {
-				"department": "nurse",
-				"message": f"{patient_name} paid — ready for vitals",
-				"encounter": encounter_name,
-			})
+		_advance_consultation_encounter(ref.reference_name)
+		_enable_patient_after_registration_payment(ref.reference_name)
+
+
+def _advance_consultation_encounter(invoice_name):
+	encounter_name = frappe.db.get_value(
+		"Patient Encounter",
+		{"consultation_invoice": invoice_name, "queue_status": "Payment Pending"},
+		"name",
+	)
+	if not encounter_name:
+		return
+
+	frappe.db.set_value("Patient Encounter", encounter_name, "queue_status", "Paid - Awaiting Vitals")
+	patient_name = frappe.db.get_value("Patient Encounter", encounter_name, "patient_name")
+	_notify("queue_update", {
+		"department": "nurse",
+		"message": f"{patient_name} paid — ready for vitals",
+		"encounter": encounter_name,
+	})
+
+
+def _enable_patient_after_registration_payment(invoice_name):
+	"""Registration-fee invoices carry a Sales Invoice Item whose
+	reference_dt/reference_dn point back at the Patient (see
+	make_invoice() / Patient.invoice_patient_registration() in
+	healthcare/patient.py) - that's how we recognise one here, as
+	opposed to a consultation, pharmacy, or lab invoice. Once such an
+	invoice is fully paid, flip that patient from Disabled back to
+	Active so the front desk can check them in.
+	"""
+
+	patient_name = frappe.db.get_value(
+		"Sales Invoice Item",
+		{"parent": invoice_name, "reference_dt": "Patient"},
+		"reference_dn",
+	)
+	if not patient_name:
+		return
+
+	if frappe.db.get_value("Patient", patient_name, "status") != "Disabled":
+		return
+
+	frappe.db.set_value("Patient", patient_name, "status", "Active")
+	_notify("queue_update", {
+		"department": "front-desk",
+		"message": f"Registration fee paid — {patient_name} is now enabled for check-in",
+		"encounter": None,
+	})
 
 # =============================================
 # QUEUE (reads Patient Encounter, filtered to

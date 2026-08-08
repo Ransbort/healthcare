@@ -172,11 +172,13 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 						<div class="form-grid">
 							<div data-fieldname="np_gender"></div>
 							<div data-fieldname="np_dob"></div>
+							<div data-fieldname="np_uid"></div>
 						</div>
 						<button class="btn btn-sm btn-secondary" id="register-patient-btn">
 							<i class="fa fa-plus"></i> Register Patient
 						</button>
 					</div>
+					<div class="fd-hint" id="patient-fee-warning" style="display:none; color:#b45309; font-weight:600;"></div>
 				</div>
 
 				<div class="fd-section">
@@ -266,10 +268,42 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	// =============================================
 	let ci_patient = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="ci_patient"]'),
-		df: { fieldtype: 'Link', fieldname: 'ci_patient', options: 'Patient', label: 'Search Patient', placeholder: 'Name or mobile number' },
+		df: {
+			fieldtype: 'Link', fieldname: 'ci_patient', options: 'Patient', label: 'Search Patient', placeholder: 'Name or mobile number',
+			onchange: function() { checkPatientRegistrationStatus(ci_patient.get_value()); }
+		},
 		render_input: true
 	});
 	ci_patient.refresh();
+
+	// Warn (and block Check In) up front if the picked/registered
+	// patient still owes a registration fee, instead of only finding
+	// out from the server error the check-in call would otherwise
+	// throw (see _ensure_patient_enabled in front_desk.py).
+	function checkPatientRegistrationStatus(patientId) {
+		const $warning = page.main.find('#patient-fee-warning');
+		const $checkinBtn = page.main.find('#create-consultation-btn');
+
+		if (!patientId) {
+			$warning.hide();
+			$checkinBtn.prop('disabled', false);
+			return;
+		}
+
+		frappe.call({
+			method: 'healthcare.healthcare.page.front_desk.front_desk.get_patient_checkin_status',
+			args: { patient: patientId },
+			callback: function(r) {
+				if (r.message && r.message.registration_fee_pending) {
+					$warning.text(__('Registration fee is still pending for this patient — collect payment at the Cashier Portal before checking them in.')).show();
+					$checkinBtn.prop('disabled', true);
+				} else {
+					$warning.hide();
+					$checkinBtn.prop('disabled', false);
+				}
+			}
+		});
+	}
 
 	let np_first_name = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_first_name"]'),
@@ -305,6 +339,13 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		render_input: true
 	});
 	np_dob.refresh();
+
+	let np_uid = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="np_uid"]'),
+		df: { fieldtype: 'Data', fieldname: 'np_uid', label: 'Identification Number (UID)' },
+		render_input: true
+	});
+	np_uid.refresh();
 
 	// Optional: an already-booked appointment being checked in. Left
 	// blank => this is a walk-in with no prior booking.
@@ -414,6 +455,8 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		} else {
 			page.main.find('#existing-patient-block').hide();
 			page.main.find('#new-patient-block').show();
+			page.main.find('#patient-fee-warning').hide();
+			page.main.find('#create-consultation-btn').prop('disabled', false);
 		}
 	});
 
@@ -431,20 +474,31 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 				last_name: np_last_name.get_value(),
 				mobile: np_mobile.get_value(),
 				gender: np_gender.get_value(),
-				dob: np_dob.get_value()
+				dob: np_dob.get_value(),
+				uid: np_uid.get_value()
 			},
 			freeze: true,
 			freeze_message: __('Registering patient...'),
 			callback: function(r) {
 				if (r.message && r.message.status === 'Success') {
 					registeredPatient = r.message.patient;
-					frappe.show_alert({ message: __('Patient {0} registered', [r.message.patient_name]), indicator: 'green' }, 6);
+
+					if (r.message.registration_invoice) {
+						frappe.show_alert({
+							message: __('Patient {0} registered — registration fee invoice {1} created. Collect payment at the Cashier Portal before checking them in.', [r.message.patient_name, r.message.registration_invoice]),
+							indicator: 'orange'
+						}, 10);
+					} else {
+						frappe.show_alert({ message: __('Patient {0} registered', [r.message.patient_name]), indicator: 'green' }, 6);
+					}
+
 					checkinMode = 'existing';
 					page.main.find('.toggle-btn').removeClass('active');
 					page.main.find('.toggle-btn[data-mode="existing"]').addClass('active');
 					page.main.find('#existing-patient-block').show();
 					page.main.find('#new-patient-block').hide();
 					ci_patient.set_value(registeredPatient);
+					checkPatientRegistrationStatus(registeredPatient);
 				}
 			}
 		});
@@ -521,8 +575,11 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			np_mobile.set_value('');
 			np_gender.set_value('');
 			np_dob.set_value('');
+			np_uid.set_value('');
 			ci_fee.set_value(0);
 			registeredPatient = null;
+			page.main.find('#patient-fee-warning').hide();
+			page.main.find('#create-consultation-btn').prop('disabled', false);
 			if (page.main.find('#queue-tab').hasClass('active')) loadQueue();
 		}
 	}
