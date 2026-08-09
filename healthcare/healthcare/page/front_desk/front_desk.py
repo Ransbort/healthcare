@@ -70,18 +70,81 @@ def bulk_send_to_nurse(encounters):
 # PATIENT REGISTRATION
 # =============================================
 
+def _defer_customer_creation(patient_doc):
+	"""Patient.validate() (see healthcare/healthcare/doctype/patient/patient.py
+	in the core Healthcare app) auto-creates and links a Customer as part
+	of patient.insert() itself, whenever Healthcare Settings has "Link
+	Customer to Patient" enabled - before any of our code below even
+	runs. We don't want that Customer to exist until the operator has
+	actually confirmed the registration in the popup, so immediately
+	undo it here: delete the just-created Customer and clear the link.
+	It's re-created in _create_customer_for_patient() once
+	confirm_patient_registration() runs - nothing else can have
+	referenced this Customer yet since the Patient itself was only
+	just inserted.
+	"""
+
+	customer_name = patient_doc.customer
+	if not customer_name:
+		return
+
+	patient_doc.db_set("customer", None, update_modified=False)
+
+	if frappe.db.exists("Customer", customer_name):
+		try:
+			frappe.delete_doc("Customer", customer_name, ignore_permissions=True, force=True)
+		except Exception:
+			# Unexpected reference already picked up the Customer -
+			# don't fail the registration over it, just leave it linked
+			# rather than losing track of it.
+			frappe.log_error(
+				title="Front Desk: could not defer Customer creation",
+				message=frappe.get_traceback(),
+			)
+			patient_doc.db_set("customer", customer_name, update_modified=False)
+
+
+def _create_customer_for_patient(patient_doc):
+	"""Re-run the same Customer creation Patient.validate() would have
+	done automatically, now that the operator has confirmed the
+	registration. Reuses Healthcare's own create_customer() so the
+	result is identical to what the normal (non-deferred) flow would
+	have produced - just delayed until confirmation.
+	"""
+
+	if patient_doc.customer:
+		return
+
+	if not frappe.db.get_single_value("Healthcare Settings", "link_customer_to_patient"):
+		return
+
+	from healthcare.healthcare.doctype.patient.patient import create_customer
+	create_customer(patient_doc)
+	patient_doc.reload()
+
+
 @frappe.whitelist()
 def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, dob=None, uid=None):
 	"""Register a brand-new walk-in patient.
 
+	This only creates the Patient record and hands its details straight
+	back to the front-end - it does NOT raise the registration-fee
+	invoice, and does NOT leave a Customer record linked, yet. The
+	front desk is expected to show the entered details back to the
+	operator in a confirmation popup and call
+	confirm_patient_registration() once they confirm; that's the point
+	at which both the Customer and the invoice actually get created.
+	This gives the operator a chance to catch typos before records that
+	are harder to unwind (an invoice, a billing Customer) get raised
+	against them.
+
 	If Healthcare Settings has "Collect Fee for Patient Registration"
 	checked, Patient.after_insert() has already flipped this record to
-	status=Disabled (see healthcare/patient.py). We pick up from there
-	and raise the registration-fee invoice immediately, so the front
-	desk has something to hand the patient rather than a silently
-	disabled record. The patient stays Disabled - and blocked from
-	check-in (see _ensure_patient_enabled below) - until that invoice
-	is paid off, at which point on_payment_entry_submit() re-enables
+	status=Disabled (see healthcare/patient.py) - regardless of whether
+	the invoice has been raised yet. The patient stays Disabled - and
+	blocked from check-in (see _ensure_patient_enabled below) - until
+	the registration invoice is raised (via confirm_patient_registration)
+	AND paid off, at which point on_payment_entry_submit() re-enables
 	them.
 	"""
 
@@ -96,18 +159,65 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 	})
 
 	patient.insert(ignore_permissions=True)
-
-	registration_invoice = None
-	if frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"):
-		registration_invoice = _raise_registration_invoice(patient)
+	_defer_customer_creation(patient)
 
 	return {
 		"status": "Success",
 		"patient": patient.name,
 		"patient_name": patient.patient_name,
-		"registration_invoice": registration_invoice,
+		"first_name": patient.first_name,
+		"last_name": patient.last_name,
+		"mobile": patient.mobile,
+		"gender": patient.sex,
+		"dob": patient.dob,
+		"uid": patient.uid,
 		"patient_status": frappe.db.get_value("Patient", patient.name, "status"),
+		"fee_will_be_charged": bool(
+			frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee")
+		),
 	}
+
+
+@frappe.whitelist()
+def confirm_patient_registration(patient):
+	"""Operator has reviewed the just-created patient's details in the
+	front-end confirmation popup and confirmed them. Only now do we
+	create the linked Customer (if Healthcare Settings calls for one)
+	and raise the registration-fee invoice (if Healthcare Settings
+	calls for one) - see create_walkin_patient() above for why these
+	are deferred to a separate step."""
+
+	patient_doc = frappe.get_doc("Patient", patient)
+
+	_create_customer_for_patient(patient_doc)
+
+	registration_invoice = None
+	if frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"):
+		registration_invoice = _raise_registration_invoice(patient_doc)
+
+	return {
+		"status": "Success",
+		"patient": patient_doc.name,
+		"patient_name": patient_doc.patient_name,
+		"registration_invoice": registration_invoice,
+		"patient_status": frappe.db.get_value("Patient", patient_doc.name, "status"),
+	}
+
+
+@frappe.whitelist()
+def cancel_patient_registration(patient):
+	"""Operator caught a mistake in the confirmation popup and backed
+	out instead of confirming. Safe to hard-delete here because this
+	only ever runs before confirm_patient_registration() has had a
+	chance to create a Customer or raise any invoice against the
+	patient - nothing else links to the record yet."""
+
+	if frappe.db.exists("Sales Invoice Item", {"reference_dt": "Patient", "reference_dn": patient}):
+		frappe.throw(_("This patient already has an invoice raised and can no longer be discarded."))
+
+	frappe.delete_doc("Patient", patient, ignore_permissions=True)
+
+	return {"status": "Success"}
 
 
 def _raise_registration_invoice(patient):

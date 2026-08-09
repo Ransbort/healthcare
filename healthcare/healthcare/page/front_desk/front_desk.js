@@ -481,28 +481,103 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			freeze_message: __('Registering patient...'),
 			callback: function(r) {
 				if (r.message && r.message.status === 'Success') {
-					registeredPatient = r.message.patient;
-
-					if (r.message.registration_invoice) {
-						frappe.show_alert({
-							message: __('Patient {0} registered — registration fee invoice {1} created. Collect payment at the Cashier Portal before checking them in.', [r.message.patient_name, r.message.registration_invoice]),
-							indicator: 'orange'
-						}, 10);
-					} else {
-						frappe.show_alert({ message: __('Patient {0} registered', [r.message.patient_name]), indicator: 'green' }, 6);
-					}
-
-					checkinMode = 'existing';
-					page.main.find('.toggle-btn').removeClass('active');
-					page.main.find('.toggle-btn[data-mode="existing"]').addClass('active');
-					page.main.find('#existing-patient-block').show();
-					page.main.find('#new-patient-block').hide();
-					ci_patient.set_value(registeredPatient);
-					checkPatientRegistrationStatus(registeredPatient);
+					showPatientConfirmationDialog(r.message);
 				}
 			}
 		});
 	});
+
+	// After a Patient record is created, show everything that was
+	// entered back to the operator for a final check before the
+	// registration-fee invoice gets raised against it — an invoice is
+	// much more of a hassle to unwind than an unconfirmed Patient row.
+	function showPatientConfirmationDialog(details) {
+		const rows = [
+			[__('First Name'), details.first_name],
+			[__('Last Name'), details.last_name],
+			[__('Mobile'), details.mobile],
+			[__('Gender'), details.gender],
+			[__('Date of Birth'), details.dob],
+			[__('UID'), details.uid],
+		].filter(function(row) { return row[1]; });
+
+		let bodyHtml = '<table class="table table-bordered">';
+		rows.forEach(function(row) {
+			bodyHtml += `<tr><td style="width:40%;"><strong>${row[0]}</strong></td><td>${frappe.utils.escape_html(row[1])}</td></tr>`;
+		});
+		bodyHtml += '</table>';
+
+		if (details.fee_will_be_charged) {
+			bodyHtml += `<p class="text-muted">${__('Confirming will create this patient\'s billing customer record and raise a registration fee invoice. The patient stays disabled and blocked from check-in until the cashier confirms payment.')}</p>`;
+		} else {
+			bodyHtml += `<p class="text-muted">${__('Confirming will finalize this patient\'s registration, including creating their billing customer record.')}</p>`;
+		}
+
+		const dialog = new frappe.ui.Dialog({
+			title: __('Confirm New Patient Details'),
+			fields: [{ fieldtype: 'HTML', options: bodyHtml }],
+			primary_action_label: __('Confirm & Register'),
+			primary_action: function() {
+				frappe.call({
+					method: 'healthcare.healthcare.page.front_desk.front_desk.confirm_patient_registration',
+					args: { patient: details.patient },
+					freeze: true,
+					freeze_message: __('Confirming registration...'),
+					callback: function(r) {
+						if (r.message && r.message.status === 'Success') {
+							dialog.confirmed = true;
+							dialog.hide();
+
+							registeredPatient = r.message.patient;
+
+							if (r.message.registration_invoice) {
+								frappe.show_alert({
+									message: __('Patient {0} registered — registration fee invoice {1} created. Collect payment at the Cashier Portal before checking them in.', [r.message.patient_name, r.message.registration_invoice]),
+									indicator: 'orange'
+								}, 10);
+							} else {
+								frappe.show_alert({ message: __('Patient {0} registered', [r.message.patient_name]), indicator: 'green' }, 6);
+							}
+
+							checkinMode = 'existing';
+							page.main.find('.toggle-btn').removeClass('active');
+							page.main.find('.toggle-btn[data-mode="existing"]').addClass('active');
+							page.main.find('#existing-patient-block').show();
+							page.main.find('#new-patient-block').hide();
+							ci_patient.set_value(registeredPatient);
+							checkPatientRegistrationStatus(registeredPatient);
+						}
+					}
+				});
+			},
+			secondary_action_label: __('Cancel'),
+			secondary_action: function() {
+				frappe.call({
+					method: 'healthcare.healthcare.page.front_desk.front_desk.cancel_patient_registration',
+					args: { patient: details.patient },
+					callback: function() {
+						dialog.confirmed = true; // already handled — skip the hidden-modal cleanup below
+						dialog.hide();
+						frappe.show_alert({ message: __('Registration discarded'), indicator: 'blue' }, 4);
+					}
+				});
+			}
+		});
+
+		// Discard the unconfirmed Patient row if the operator closes
+		// the dialog via the 'x'/escape instead of an explicit button,
+		// so a walked-away registration doesn't linger unconfirmed.
+		dialog.$wrapper.on('hidden.bs.modal', function() {
+			if (!dialog.confirmed) {
+				frappe.call({
+					method: 'healthcare.healthcare.page.front_desk.front_desk.cancel_patient_registration',
+					args: { patient: details.patient }
+				});
+			}
+		});
+
+		dialog.show();
+	}
 
 	// Check-in: either check in a picked appointment, or create a
 	// walk-in encounter with no prior booking.
