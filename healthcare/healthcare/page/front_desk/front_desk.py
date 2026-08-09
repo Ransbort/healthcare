@@ -161,6 +161,18 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 	patient.insert(ignore_permissions=True)
 	_defer_customer_creation(patient)
 
+	# Surface the actual fee amount (not just whether one will be
+	# charged) so the front-end confirmation dialog can show the
+	# operator exactly what's about to be invoiced, instead of a vague
+	# "a fee will be charged" message.
+	collect_fee = bool(
+		frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee")
+	)
+	registration_fee = (
+		frappe.db.get_single_value("Healthcare Settings", "registration_fee")
+		if collect_fee else None
+	)
+
 	return {
 		"status": "Success",
 		"patient": patient.name,
@@ -172,9 +184,8 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 		"dob": patient.dob,
 		"uid": patient.uid,
 		"patient_status": frappe.db.get_value("Patient", patient.name, "status"),
-		"fee_will_be_charged": bool(
-			frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee")
-		),
+		"fee_will_be_charged": collect_fee,
+		"registration_fee": registration_fee,
 	}
 
 

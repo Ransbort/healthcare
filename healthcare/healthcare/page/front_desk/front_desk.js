@@ -132,10 +132,66 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			.vitals-form { background: #f8f9fa; border-radius: 8px; padding: 15px; margin-top: 10px; display: none; }
 			.vitals-form.open { display: block; }
 
+			/* =============================================
+			   PATIENT CONFIRMATION DIALOG
+			   ============================================= */
+			.pcd-wrap { margin: -8px -4px; }
+
+			.pcd-header {
+				display: flex; align-items: center; gap: 14px;
+				padding: 18px 20px; border-radius: 10px; margin-bottom: 18px;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;
+			}
+			.pcd-header .pcd-avatar {
+				width: 46px; height: 46px; border-radius: 50%;
+				background: rgba(255,255,255,0.2); display: flex; align-items: center;
+				justify-content: center; font-size: 1.3rem; flex-shrink: 0;
+			}
+			.pcd-header .pcd-title { font-size: 1.05rem; font-weight: 700; line-height: 1.3; }
+			.pcd-header .pcd-subtitle { font-size: 0.8rem; opacity: 0.85; margin-top: 2px; }
+
+			.pcd-grid {
+				display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+				border: 1px solid #e9ecef; border-radius: 10px; overflow: hidden;
+				margin-bottom: 16px;
+			}
+			.pcd-field {
+				padding: 12px 16px; border-bottom: 1px solid #e9ecef; border-right: 1px solid #e9ecef;
+			}
+			.pcd-field:nth-child(2n) { border-right: none; }
+			.pcd-field:last-child, .pcd-field:nth-last-child(2):nth-child(2n+1) { border-bottom: none; }
+			.pcd-field .pcd-label {
+				font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+				color: #8a94a6; font-weight: 600; margin-bottom: 3px;
+			}
+			.pcd-field .pcd-value { font-size: 0.95rem; color: #2b2f38; font-weight: 500; word-break: break-word; }
+
+			.pcd-fee-box {
+				display: flex; align-items: center; justify-content: space-between; gap: 12px;
+				padding: 14px 18px; border-radius: 10px; margin-bottom: 14px;
+				background: #fff8ec; border: 1px solid #fbe3b6;
+			}
+			.pcd-fee-box.pcd-fee-free { background: #edf9f0; border-color: #bfe6c9; }
+			.pcd-fee-box .pcd-fee-icon {
+				width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+				background: #f6c453; color: #7a3e00; display: flex; align-items: center; justify-content: center;
+			}
+			.pcd-fee-box.pcd-fee-free .pcd-fee-icon { background: #7fcf94; color: #155724; }
+			.pcd-fee-box .pcd-fee-text { font-size: 0.85rem; color: #7a3e00; line-height: 1.4; }
+			.pcd-fee-box.pcd-fee-free .pcd-fee-text { color: #155724; }
+			.pcd-fee-box .pcd-fee-amount { font-size: 1.25rem; font-weight: 700; color: #7a3e00; white-space: nowrap; }
+			.pcd-fee-box.pcd-fee-free .pcd-fee-amount { color: #155724; }
+
+			.pcd-note { font-size: 0.8rem; color: #8a94a6; line-height: 1.5; padding: 0 2px; }
+
 			@media (max-width: 768px) {
 				.fd-wrapper { padding: 15px; }
 				.form-grid, .form-grid-2 { grid-template-columns: 1fr; }
 				.tabs-section { overflow-x: auto; flex-wrap: nowrap; }
+				.pcd-grid { grid-template-columns: 1fr; }
+				.pcd-field:nth-child(2n) { border-right: none; }
+				.pcd-field { border-right: none !important; }
+				.pcd-fee-box { flex-direction: column; align-items: flex-start; }
 			}
 		</style>
 	`;
@@ -491,27 +547,90 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	// entered back to the operator for a final check before the
 	// registration-fee invoice gets raised against it — an invoice is
 	// much more of a hassle to unwind than an unconfirmed Patient row.
+	//
+	// Beautified as a card-style summary (header + a two-column field
+	// grid + a dedicated fee callout) instead of a plain HTML table,
+	// so the registration fee amount is impossible to miss.
 	function showPatientConfirmationDialog(details) {
-		const rows = [
+		const fields = [
 			[__('First Name'), details.first_name],
 			[__('Last Name'), details.last_name],
 			[__('Mobile'), details.mobile],
 			[__('Gender'), details.gender],
-			[__('Date of Birth'), details.dob],
+			[__('Date of Birth'), frappe.datetime.str_to_user(details.dob)],
 			[__('UID'), details.uid],
 		].filter(function(row) { return row[1]; });
 
-		let bodyHtml = '<table class="table table-bordered">';
-		rows.forEach(function(row) {
-			bodyHtml += `<tr><td style="width:40%;"><strong>${row[0]}</strong></td><td>${frappe.utils.escape_html(row[1])}</td></tr>`;
-		});
-		bodyHtml += '</table>';
+		const displayName = [details.first_name, details.last_name].filter(Boolean).join(' ');
 
-		if (details.fee_will_be_charged) {
-			bodyHtml += `<p class="text-muted">${__('Confirming will create this patient\'s billing customer record and raise a registration fee invoice. The patient stays disabled and blocked from check-in until the cashier confirms payment.')}</p>`;
+		let fieldsHtml = fields.map(function(row) {
+			return `
+				<div class="pcd-field">
+					<div class="pcd-label">${row[0]}</div>
+					<div class="pcd-value">${frappe.utils.escape_html(row[1])}</div>
+				</div>
+			`;
+		}).join('');
+
+		let feeHtml = '';
+		let noteHtml = '';
+
+		// Mirrors the backend exactly: _raise_registration_invoice() only
+		// actually raises an invoice when collect_registration_fee is on
+		// AND a registration_fee amount is configured — if the amount is
+		// missing it silently skips invoicing (see front_desk.py). So an
+		// unconfigured amount is treated identically to "no fee" here,
+		// rather than shown as a warning that implies something's broken.
+		const hasAmount = details.registration_fee !== null && details.registration_fee !== undefined && details.registration_fee !== 0;
+		const willActuallyCharge = !!details.fee_will_be_charged && hasAmount;
+
+		if (willActuallyCharge) {
+			feeHtml = `
+				<div class="pcd-fee-box">
+					<div style="display:flex; align-items:center; gap:12px;">
+						<div class="pcd-fee-icon"><i class="fa fa-money"></i></div>
+						<div class="pcd-fee-text">${__('Registration fee to be invoiced')}</div>
+					</div>
+					<div class="pcd-fee-amount">${format_currency(details.registration_fee)}</div>
+				</div>
+			`;
+			noteHtml = `
+				<div class="pcd-note">
+					<i class="fa fa-info-circle"></i>
+					${__('Confirming creates this patient\'s billing customer record and raises the invoice above. The patient stays disabled and blocked from check-in until the cashier confirms payment.')}
+				</div>
+			`;
 		} else {
-			bodyHtml += `<p class="text-muted">${__('Confirming will finalize this patient\'s registration, including creating their billing customer record.')}</p>`;
+			feeHtml = `
+				<div class="pcd-fee-box pcd-fee-free">
+					<div style="display:flex; align-items:center; gap:12px;">
+						<div class="pcd-fee-icon"><i class="fa fa-check"></i></div>
+						<div class="pcd-fee-text">${__('No registration fee will be charged')}</div>
+					</div>
+				</div>
+			`;
+			noteHtml = `
+				<div class="pcd-note">
+					<i class="fa fa-info-circle"></i>
+					${__('Confirming will finalize this patient\'s registration, including creating their billing customer record.')}
+				</div>
+			`;
 		}
+
+		let bodyHtml = `
+			<div class="pcd-wrap">
+				<div class="pcd-header">
+					<div class="pcd-avatar"><i class="fa fa-user"></i></div>
+					<div>
+						<div class="pcd-title">${frappe.utils.escape_html(displayName || __('New Patient'))}</div>
+						<div class="pcd-subtitle">${__('Please review the details below before confirming registration')}</div>
+					</div>
+				</div>
+				<div class="pcd-grid">${fieldsHtml}</div>
+				${feeHtml}
+				${noteHtml}
+			</div>
+		`;
 
 		const dialog = new frappe.ui.Dialog({
 			title: __('Confirm New Patient Details'),
