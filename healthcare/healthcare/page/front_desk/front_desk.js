@@ -332,6 +332,36 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	});
 	ci_patient.refresh();
 
+	// Frappe's built-in "+ Create a new Patient" item (shown in this
+	// dropdown when a search finds no match) opens a generic quick-entry
+	// dialog that creates a Patient — and its Customer — immediately,
+	// with none of the deferred-customer-creation / confirmation-popup /
+	// registration-fee-invoice logic the New Patient tab below provides.
+	// A patient created that way would end up inconsistent with everyone
+	// else. Redirect it to that tab instead of disabling it outright
+	// (disabling it via only_select would also kill this field's live
+	// search-as-you-type, which we need to keep).
+	ci_patient.new_doc = function(txt) {
+		checkinMode = 'new';
+		page.main.find('.toggle-btn').removeClass('active');
+		page.main.find('.toggle-btn[data-mode="new"]').addClass('active');
+		page.main.find('#existing-patient-block').hide();
+		page.main.find('#new-patient-block').show();
+		page.main.find('#patient-fee-warning').hide();
+		page.main.find('#create-consultation-btn').prop('disabled', false);
+
+		if (txt) {
+			const parts = txt.trim().split(/\s+/);
+			np_first_name.set_value(parts[0] || '');
+			if (parts.length > 1) np_last_name.set_value(parts.slice(1).join(' '));
+		}
+
+		frappe.show_alert({
+			message: __('No matching patient — use the New Patient form below to register {0}', [txt || __('them')]),
+			indicator: 'blue'
+		}, 6);
+	};
+
 	// Warn (and block Check In) up front if the picked/registered
 	// patient still owes a registration fee, instead of only finding
 	// out from the server error the check-in call would otherwise
