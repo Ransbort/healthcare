@@ -2318,21 +2318,21 @@ def get_custom_fields():
 				"reqd": 0,
 				"hidden": 0,
 			},
-		],
+		]
 		# Pharmacy POS: lets an admin configure which Item Group the POS's
 		# walk-in/OTC branch pulls from, instead of hardcoding "Pharmacy".
 		# Read by pharmacy.py's get_pos_medications()/get_pharmacy_settings()
 		# and written by set_pharmacy_item_group().
-		"Healthcare Settings": [
-			{
-				"fieldname": "pharmacy_item_group",
-				"label": "Pharmacy Item Group",
-				"fieldtype": "Link",
-				"options": "Item Group",
-				"insert_after": "allow_oversell_medication",
-				"description": "Item Group shown in Pharmacy POS for walk-in/OTC items.",
-				"reqd": 0,
-				"hidden": 0,
-			},
-		],
+		# "Healthcare Settings": [
+		# 	{
+		# 		"fieldname": "pharmacy_item_group",
+		# 		"label": "Pharmacy Item Group",
+		# 		"fieldtype": "Link",
+		# 		"options": "Item Group",
+		# 		"insert_after": "allow_oversell_medication",
+		# 		"description": "Item Group shown in Pharmacy POS for walk-in/OTC items.",
+		# 		"reqd": 0,
+		# 		"hidden": 0,
+		# 	},
+		# ],
 	}
