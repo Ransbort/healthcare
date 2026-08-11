@@ -2318,7 +2318,7 @@ def get_custom_fields():
 				"reqd": 0,
 				"hidden": 0,
 			},
-		]
+		],
 		# Pharmacy POS: lets an admin configure which Item Group the POS's
 		# walk-in/OTC branch pulls from, instead of hardcoding "Pharmacy".
 		# Read by pharmacy.py's get_pos_medications()/get_pharmacy_settings()
@@ -2335,4 +2335,28 @@ def get_custom_fields():
 		# 		"hidden": 0,
 		# 	},
 		# ],
+		"Healthcare Settings": [
+			{
+				"fieldname": "auto_generate_patient_uid",
+				"label": "Auto-generate Patient UID",
+				"fieldtype": "Check",
+				"insert_after": "patient_name_by",
+				"description": "Automatically generate the Identification Number (UID) for new patients instead of requiring front desk / nursing staff to enter one manually.",
+				"default": "0",
+				"reqd": 0,
+				"hidden": 0,
+			},
+			{
+				"fieldname": "patient_uid_naming_series",
+				"label": "Patient UID Naming Series",
+				"fieldtype": "Data",
+				"insert_after": "auto_generate_patient_uid",
+				"description": "Pattern used to auto-generate the UID, e.g. UID-.YYYY.-.#####. Only used when Auto-generate Patient UID is checked.",
+				"depends_on": "eval:doc.auto_generate_patient_uid",
+				"default": "UID-.#####",
+				"reqd": 0,
+				"hidden": 0,
+			},
+		],
+
 	}
