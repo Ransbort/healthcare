@@ -1055,6 +1055,14 @@ function loadQueue() {
 						<div class="form-grid">
 							<div data-vf="weight-${row.name}"></div>
 							<div data-vf="height-${row.name}"></div>
+							<div data-vf="bmi-${row.name}"></div>
+						</div>
+						<div class="form-grid">
+							<div data-vf="spo2-${row.name}"></div>
+							<div data-vf="fbs-${row.name}"></div>
+							<div data-vf="rbs-${row.name}"></div>
+						</div>
+						<div class="form-grid-2">
 							<div data-vf="notes-${row.name}"></div>
 						</div>
 						<button class="btn btn-success btn-sm btn-save-vitals" data-name="${row.name}">
@@ -1084,10 +1092,35 @@ function loadQueue() {
 			weight.refresh();
 			const height = frappe.ui.form.make_control({ parent: container.find(`[data-vf="height-${name}"]`), df: { fieldtype: 'Float', fieldname: 'height', label: 'Height (cm)' }, render_input: true });
 			height.refresh();
+			// Read-only: this is a live client-side preview only, purely so
+			// the nurse can see it while entering weight/height. The value
+			// actually saved is always recomputed server-side in
+			// save_vitals() -> _calculate_bmi(), never trusted from here.
+			const bmi = frappe.ui.form.make_control({ parent: container.find(`[data-vf="bmi-${name}"]`), df: { fieldtype: 'Float', fieldname: 'bmi', label: 'BMI', precision: 2, read_only: 1, description: __('Auto-calculated from weight & height') }, render_input: true });
+			bmi.refresh();
+			const spo2 = frappe.ui.form.make_control({ parent: container.find(`[data-vf="spo2-${name}"]`), df: { fieldtype: 'Int', fieldname: 'spo2', label: 'SpO2 (%)' }, render_input: true });
+			spo2.refresh();
+			const fbs = frappe.ui.form.make_control({ parent: container.find(`[data-vf="fbs-${name}"]`), df: { fieldtype: 'Float', fieldname: 'fbs', label: 'FBS (mg/dL)' }, render_input: true });
+			fbs.refresh();
+			const rbs = frappe.ui.form.make_control({ parent: container.find(`[data-vf="rbs-${name}"]`), df: { fieldtype: 'Float', fieldname: 'rbs', label: 'RBS (mg/dL)' }, render_input: true });
+			rbs.refresh();
 			const notes = frappe.ui.form.make_control({ parent: container.find(`[data-vf="notes-${name}"]`), df: { fieldtype: 'Data', fieldname: 'notes', label: 'Notes' }, render_input: true });
 			notes.refresh();
 
-			formEl.data('controls', { temp, bp, pulse, weight, height, notes });
+			function recalcBmiPreview() {
+				const w = parseFloat(weight.get_value());
+				const h = parseFloat(height.get_value());
+				if (w > 0 && h > 0) {
+					const heightM = h / 100;
+					bmi.set_value(Math.round((w / (heightM * heightM)) * 100) / 100);
+				} else {
+					bmi.set_value('');
+				}
+			}
+			if (weight.$input) weight.$input.on('change input', recalcBmiPreview);
+			if (height.$input) height.$input.on('change input', recalcBmiPreview);
+
+			formEl.data('controls', { temp, bp, pulse, weight, height, bmi, spo2, fbs, rbs, notes });
 		});
 
 		container.find('.btn-save-vitals').on('click', function() {
@@ -1104,6 +1137,9 @@ function loadQueue() {
 					pulse: c.pulse.get_value(),
 					weight: c.weight.get_value(),
 					height: c.height.get_value(),
+					spo2: c.spo2.get_value(),
+					fbs: c.fbs.get_value(),
+					rbs: c.rbs.get_value(),
 					notes: c.notes.get_value()
 				},
 				freeze: true,
@@ -1150,7 +1186,11 @@ function loadQueue() {
 			const vitalsSummary = [
 				row.vitals_temperature ? `${row.vitals_temperature}°C` : null,
 				row.vitals_blood_pressure || null,
-				row.vitals_pulse ? `${row.vitals_pulse} bpm` : null
+				row.vitals_pulse ? `${row.vitals_pulse} bpm` : null,
+				row.vitals_spo2 ? `SpO2 ${row.vitals_spo2}%` : null,
+				row.vitals_bmi ? `BMI ${row.vitals_bmi}` : null,
+				row.vitals_fbs ? `FBS ${row.vitals_fbs}` : null,
+				row.vitals_rbs ? `RBS ${row.vitals_rbs}` : null
 			].filter(Boolean).join(' · ') || __('No vitals recorded');
 			body += `
 				<tr>

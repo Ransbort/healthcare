@@ -836,6 +836,10 @@ def get_queue(date=None, queue_status=None):
 			"vitals_pulse",
 			"vitals_weight",
 			"vitals_height",
+			"vitals_bmi",
+			"vitals_spo2",
+			"vitals_fbs",
+			"vitals_rbs",
 			"vitals_notes",
 		],
 
@@ -893,6 +897,26 @@ def send_to_nurse(encounter):
 	return {"status": "Success"}
 
 
+def _calculate_bmi(weight, height):
+	"""BMI = weight(kg) / height(m)^2. Computed server-side (rather than
+	trusting a client-supplied value) so it can never drift out of sync
+	with the weight/height actually saved on the encounter. Returns None
+	if either input is missing, non-numeric, or height is non-positive
+	(would otherwise divide by zero / produce a nonsense negative BMI)."""
+
+	try:
+		weight = float(weight)
+		height = float(height)
+	except (TypeError, ValueError):
+		return None
+
+	if not weight or not height or height <= 0:
+		return None
+
+	height_m = height / 100
+	return round(weight / (height_m ** 2), 2)
+
+
 @frappe.whitelist()
 def save_vitals(
 	encounter,
@@ -901,6 +925,9 @@ def save_vitals(
 	pulse=None,
 	weight=None,
 	height=None,
+	spo2=None,
+	fbs=None,
+	rbs=None,
 	notes=None
 ):
 	_require_tab_access("nurse")
@@ -911,6 +938,10 @@ def save_vitals(
 		"vitals_pulse": pulse,
 		"vitals_weight": weight,
 		"vitals_height": height,
+		"vitals_bmi": _calculate_bmi(weight, height),
+		"vitals_spo2": spo2,
+		"vitals_fbs": fbs,
+		"vitals_rbs": rbs,
 		"vitals_notes": notes,
 
 		"vitals_recorded_by": frappe.session.user,
