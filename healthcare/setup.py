@@ -356,6 +356,7 @@ def create_medical_departments():
 		"Diagnostic Imaging",
 		"ENT",
 		"Gastroenterology",
+		"General",
 		"General Surgery",
 		"Gynaecology",
 		"Haematology",
