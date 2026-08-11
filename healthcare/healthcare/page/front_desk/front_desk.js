@@ -318,6 +318,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	// =============================================
 	let checkinMode = 'existing';
 	let registeredPatient = null;
+	let autoGeneratePatientUid = false;
 
 	// =============================================
 	// CHECK-IN CONTROLS
@@ -432,6 +433,38 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		render_input: true
 	});
 	np_uid.refresh();
+
+	// Whether the UID is typed in here or generated server-side is a
+	// Healthcare Settings toggle - fetch it once on load so the field
+	// can switch into a read-only "fetches and displays" mode instead
+	// of an editable input. Defaults to the manual/editable behaviour
+	// until the call returns, and again if it fails, so the field is
+	// never silently stuck un-usable.
+	frappe.call({
+		method: 'healthcare.healthcare.page.front_desk.front_desk.get_front_desk_settings',
+		callback: function(r) {
+			autoGeneratePatientUid = !!(r.message && r.message.auto_generate_patient_uid);
+			setUidFieldMode();
+		}
+	});
+
+	function setUidFieldMode() {
+		if (autoGeneratePatientUid) {
+			np_uid.df.read_only = 1;
+			np_uid.set_value('');
+			np_uid.df.placeholder = __('Auto-generated on registration');
+			if (np_uid.$input) {
+				np_uid.$input.prop('placeholder', __('Auto-generated on registration'));
+			}
+		} else {
+			np_uid.df.read_only = 0;
+			np_uid.df.placeholder = '';
+			if (np_uid.$input) {
+				np_uid.$input.prop('placeholder', '');
+			}
+		}
+		np_uid.refresh();
+	}
 
 	// Optional: an already-booked appointment being checked in. Left
 	// blank => this is a walk-in with no prior booking.
@@ -567,6 +600,14 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			freeze_message: __('Registering patient...'),
 			callback: function(r) {
 				if (r.message && r.message.status === 'Success') {
+					// When auto-generation is on the field was left blank
+					// on submit - fill it back in with whatever the
+					// server actually generated so the operator sees the
+					// real UID (and the confirmation popup below shows
+					// it too, via details.uid).
+					if (autoGeneratePatientUid) {
+						np_uid.set_value(r.message.uid || '');
+					}
 					showPatientConfirmationDialog(r.message);
 				}
 			}
@@ -800,6 +841,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			np_gender.set_value('');
 			np_dob.set_value('');
 			np_uid.set_value('');
+			setUidFieldMode();
 			ci_fee.set_value(0);
 			registeredPatient = null;
 			page.main.find('#patient-fee-warning').hide();

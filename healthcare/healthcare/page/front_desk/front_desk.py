@@ -70,6 +70,46 @@ def bulk_send_to_nurse(encounters):
 # PATIENT REGISTRATION
 # =============================================
 
+@frappe.whitelist()
+def get_front_desk_settings():
+	"""Front-end config lookup, called once when the page loads. Right
+	now this only covers whether the patient UID should be typed in by
+	the front desk or generated automatically - see
+	_resolve_patient_uid() below - but it's the natural place to add
+	any other Healthcare Settings the front desk page needs to react
+	to without hardcoding them into front_desk.js."""
+
+	return {
+		"auto_generate_patient_uid": bool(
+			frappe.db.get_single_value("Healthcare Settings", "auto_generate_patient_uid")
+		),
+	}
+
+
+def _resolve_patient_uid(uid):
+	"""Healthcare Settings can be configured to auto-generate the
+	patient UID instead of leaving it to be typed in by front desk /
+	nursing staff (a manual UID is an easy place for a typo or a
+	duplicate to slip in). When that's switched on, front_desk.js
+	disables the UID input entirely - see get_front_desk_settings()
+	above - so whatever comes through in `uid` here is ignored in
+	favour of the next value off the configured naming series.
+	When it's switched off, fall back to what was typed in, exactly
+	as before.
+	"""
+
+	if not frappe.db.get_single_value("Healthcare Settings", "auto_generate_patient_uid"):
+		return uid
+
+	from frappe.model.naming import make_autoname
+
+	naming_series = (
+		frappe.db.get_single_value("Healthcare Settings", "patient_uid_naming_series")
+		or "UID-.#####"
+	)
+	return make_autoname(naming_series)
+
+
 def _defer_customer_creation(patient_doc):
 	"""Patient.validate() (see healthcare/healthcare/doctype/patient/patient.py
 	in the core Healthcare app) auto-creates and links a Customer as part
@@ -155,7 +195,7 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 		"mobile": mobile,
 		"sex": gender,
 		"dob": dob,
-		"uid": uid,
+		"uid": _resolve_patient_uid(uid),
 	})
 
 	patient.insert(ignore_permissions=True)
