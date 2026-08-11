@@ -28,6 +28,73 @@ def _notify(event, payload):
 	frappe.publish_realtime(event=event, message=payload)
 
 # =============================================
+# TAB ACCESS CONTROL
+# =============================================
+
+FRONT_DESK_TABS = ["checkin", "queue", "nurse", "doctor"]
+
+TAB_ROLES_FIELD = {
+	"checkin": "front_desk_checkin_roles",
+	"queue": "front_desk_queue_roles",
+	"nurse": "front_desk_nurse_roles",
+	"doctor": "front_desk_doctor_roles",
+}
+
+TAB_LABEL = {
+	"checkin": _("Check-In"),
+	"queue": _("Queue"),
+	"nurse": _("Nurse Station"),
+	"doctor": _("Doctor Queue"),
+}
+
+
+def _configured_roles_for_tab(tab):
+	fieldname = TAB_ROLES_FIELD[tab]
+	configured = frappe.db.get_single_value("Healthcare Settings", fieldname)
+	return {r.strip() for r in (configured or "").split(",") if r.strip()}
+
+
+def _user_can_access_tab(tab, user=None):
+	"""Whether `user` (default: session user) is allowed to access the
+	given Front Desk tab, per the comma-separated role list configured
+	in Healthcare Settings (front_desk_<tab>_roles). A tab left
+	unconfigured/blank is open to anyone - so a site that has never
+	touched this settings section behaves exactly as before this
+	feature existed.
+	"""
+	user = user or frappe.session.user
+
+	# Admins/System Managers always pass, so nobody can lock themselves
+	# out of their own Front Desk configuration.
+	if user == "Administrator" or "System Manager" in frappe.get_roles(user):
+		return True
+
+	configured_roles = _configured_roles_for_tab(tab)
+	if not configured_roles:
+		return True
+
+	return bool(configured_roles & set(frappe.get_roles(user)))
+
+
+def _get_allowed_tabs(user=None):
+	return [tab for tab in FRONT_DESK_TABS if _user_can_access_tab(tab, user)]
+
+
+def _require_tab_access(tab):
+	"""Server-side gate for any whitelisted method that belongs to a
+	specific Front Desk tab. Raises PermissionError (HTTP 403) rather
+	than silently no-op'ing, so a blocked call fails loudly whether it
+	came from the page, the console, or a direct API request - the
+	front-end hiding the tab (see get_front_desk_settings) is a UX
+	nicety on top of this, never a substitute for it.
+	"""
+	if not _user_can_access_tab(tab):
+		frappe.throw(
+			_("You are not permitted to access the {0} area of Front Desk.").format(TAB_LABEL[tab]),
+			frappe.PermissionError,
+		)
+
+# =============================================
 # BULK SEND TO NURSE
 # =============================================
 
@@ -37,6 +104,7 @@ def bulk_send_to_nurse(encounters):
 	given list to the nurse queue in one action. Re-checks queue_status
 	server-side rather than trusting the front-end's snapshot, in case
 	something changed between page load and this click."""
+	_require_tab_access("queue")
 	import json
 	if isinstance(encounters, str):
 		encounters = json.loads(encounters)
@@ -83,6 +151,7 @@ def get_front_desk_settings():
 		"auto_generate_patient_uid": bool(
 			frappe.db.get_single_value("Healthcare Settings", "auto_generate_patient_uid")
 		),
+		"allowed_tabs": _get_allowed_tabs(),
 	}
 
 
@@ -165,6 +234,7 @@ def _create_customer_for_patient(patient_doc):
 
 @frappe.whitelist()
 def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, dob=None, uid=None):
+	_require_tab_access("checkin")
 	"""Register a brand-new walk-in patient.
 
 	This only creates the Patient record and hands its details straight
@@ -231,6 +301,7 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 
 @frappe.whitelist()
 def confirm_patient_registration(patient):
+	_require_tab_access("checkin")
 	"""Operator has reviewed the just-created patient's details in the
 	front-end confirmation popup and confirmed them. Only now do we
 	create the linked Customer (if Healthcare Settings calls for one)
@@ -257,6 +328,7 @@ def confirm_patient_registration(patient):
 
 @frappe.whitelist()
 def cancel_patient_registration(patient):
+	_require_tab_access("checkin")
 	"""Operator caught a mistake in the confirmation popup and backed
 	out instead of confirming. Safe to hard-delete here because this
 	only ever runs before confirm_patient_registration() has had a
@@ -314,6 +386,7 @@ def _ensure_patient_enabled(patient):
 
 @frappe.whitelist()
 def get_patient_checkin_status(patient):
+	_require_tab_access("checkin")
 	"""Whether `patient` is currently blocked from check-in pending
 	registration fee payment, so the front desk can warn about it
 	before staff even try to check the patient in (rather than only
@@ -436,6 +509,7 @@ def create_consultation(
 
 @frappe.whitelist()
 def get_pending_checkins(date=None, patient=None):
+	_require_tab_access("checkin")
 	"""Booked appointments for `date` that have not yet been checked in
 	(i.e. no Patient Encounter has been created against them yet)."""
 
@@ -486,6 +560,7 @@ def _patient_and_practitioner_names(patient, practitioner):
 
 @frappe.whitelist()
 def check_in_appointment(appointment, consultation_fee=0):
+	_require_tab_access("checkin")
 	"""Patient with a booked appointment has physically arrived.
 
 	Creates the draft Patient Encounter (docstatus=0) that now owns
@@ -535,6 +610,7 @@ def check_in_appointment(appointment, consultation_fee=0):
 
 @frappe.whitelist()
 def create_walkin_encounter(patient, practitioner, appointment_type, department=None, consultation_fee=0):
+	_require_tab_access("checkin")
 	"""Walk-in patient with no prior booking. Skips Patient Appointment
 	entirely and creates the draft Patient Encounter directly.
 
@@ -714,6 +790,12 @@ def _enable_patient_after_registration_payment(invoice_name):
 @frappe.whitelist()
 def get_queue(date=None, queue_status=None):
 
+	tab_for_status = {
+		"With Nurse": "nurse",
+		"With Doctor": "doctor",
+	}
+	_require_tab_access(tab_for_status.get(queue_status, "queue"))
+
 	date = date or nowdate()
 
 	filters = {
@@ -800,6 +882,7 @@ def get_queue(date=None, queue_status=None):
 
 @frappe.whitelist()
 def send_to_nurse(encounter):
+	_require_tab_access("queue")
 	frappe.db.set_value("Patient Encounter", encounter, "queue_status", "With Nurse")
 	patient_name = frappe.db.get_value("Patient Encounter", encounter, "patient_name")
 	_notify("queue_update", {
@@ -820,6 +903,7 @@ def save_vitals(
 	height=None,
 	notes=None
 ):
+	_require_tab_access("nurse")
 
 	doc_updates = {
 		"vitals_temperature": temperature,
@@ -854,6 +938,7 @@ def save_vitals(
 
 @frappe.whitelist()
 def start_consultation(encounter):
+	_require_tab_access("doctor")
 	"""The Encounter already exists (created at check-in) — this just
 	flips it into 'In Consultation' so the doctor can open and complete
 	the same draft document."""

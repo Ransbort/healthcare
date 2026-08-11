@@ -445,8 +445,39 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		callback: function(r) {
 			autoGeneratePatientUid = !!(r.message && r.message.auto_generate_patient_uid);
 			setUidFieldMode();
+			applyTabAccess((r.message && r.message.allowed_tabs) || ['checkin', 'queue', 'nurse', 'doctor']);
 		}
 	});
+
+	function applyTabAccess(allowedTabs) {
+		const allTabs = ['checkin', 'queue', 'nurse', 'doctor'];
+
+		allTabs.forEach(function(tab) {
+			if (allowedTabs.indexOf(tab) === -1) {
+				page.main.find(`.tab-btn[data-tab="${tab}"]`).hide();
+				page.main.find(`#${tab}-tab`).removeClass('active').hide();
+			}
+		});
+
+		// If the tab that's currently marked active just got hidden (or
+		// nothing was active yet), fall back to the first tab this user
+		// is actually allowed to see.
+		const activeBtn = page.main.find('.tab-btn.active');
+		if (!activeBtn.length || activeBtn.is(':hidden')) {
+			page.main.find('.tab-btn').removeClass('active');
+			page.main.find('.tab-content').removeClass('active');
+
+			const firstAllowed = allTabs.find(t => allowedTabs.indexOf(t) !== -1);
+			if (firstAllowed) {
+				page.main.find(`.tab-btn[data-tab="${firstAllowed}"]`).addClass('active');
+				page.main.find(`#${firstAllowed}-tab`).addClass('active').show();
+
+				if (firstAllowed === 'queue') withServerToday(function(t) { q_date.set_value(t); loadQueue(); });
+				if (firstAllowed === 'nurse') withServerToday(function(t) { n_date.set_value(t); loadNurseQueue(); });
+				if (firstAllowed === 'doctor') withServerToday(function(t) { d_date.set_value(t); loadDoctorQueue(); });
+			}
+		}
+	}
 
 	function setUidFieldMode() {
 		if (autoGeneratePatientUid) {
