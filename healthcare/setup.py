@@ -2337,6 +2337,16 @@ def get_custom_fields():
 		# ],
 		"Healthcare Settings": [
 			{
+				"fieldname": "pharmacy_item_group",
+				"label": "Pharmacy Item Group",
+				"fieldtype": "Link",
+				"options": "Item Group",
+				"insert_after": "allow_oversell_medication",
+				"description": "Item Group shown in Pharmacy POS for walk-in/OTC items.",
+				"reqd": 0,
+				"hidden": 0,
+			},
+			{
 				"fieldname": "auto_generate_patient_uid",
 				"label": "Auto-generate Patient UID",
 				"fieldtype": "Check",
