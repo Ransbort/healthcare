@@ -522,13 +522,6 @@
    "options": "Item"
   },
   {
-   "description": "Item Group shown in Pharmacy POS for walk-in/OTC items.\n",
-   "fieldname": "pharmacy_item_group",
-   "fieldtype": "Link",
-   "label": "Pharmacy Item Group",
-   "options": "Item Group"
-  },
-  {
    "fieldname": "configuration_tab",
    "fieldtype": "Tab Break",
    "label": "Configuration"
