@@ -997,6 +997,24 @@ def _create_vital_signs(encounter_doc, temperature, blood_pressure, pulse,
 	return vs
 
 
+def _clean_numeric(value):
+	"""Numeric controls in front_desk.js (frappe.ui.form.make_control)
+	return '' - not null/None - when the nurse leaves the field empty,
+	and that '' survives all the way through the whitelisted call's
+	form-dict parsing. frappe.get_doc()/insert() quietly sanitizes that
+	away for us, but the raw frappe.db.set_value() calls below don't -
+	they write '' straight into the SQL column, and MySQL strict mode
+	rejects '' as a decimal for Float/Int columns (temperature, pulse,
+	weight, height, spo2, fbs, rbs all qualify). Normalize once, up
+	front, so every numeric field ends up either a real value or a
+	proper None wherever it's written.
+	"""
+
+	if value in (None, ""):
+		return None
+	return value
+
+
 @frappe.whitelist()
 def save_vitals(
 	encounter,
@@ -1011,6 +1029,14 @@ def save_vitals(
 	notes=None
 ):
 	_require_tab_access("nurse")
+
+	temperature = _clean_numeric(temperature)
+	pulse = _clean_numeric(pulse)
+	weight = _clean_numeric(weight)
+	height = _clean_numeric(height)
+	spo2 = _clean_numeric(spo2)
+	fbs = _clean_numeric(fbs)
+	rbs = _clean_numeric(rbs)
 
 	encounter_doc = frappe.get_doc("Patient Encounter", encounter)
 	bmi = _calculate_bmi(weight, height)
