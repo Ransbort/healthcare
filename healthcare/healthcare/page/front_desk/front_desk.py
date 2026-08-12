@@ -841,6 +841,7 @@ def get_queue(date=None, queue_status=None):
 			"vitals_fbs",
 			"vitals_rbs",
 			"vitals_notes",
+			"vital_signs_record",
 		],
 
 		order_by="encounter_time asc",
@@ -917,6 +918,85 @@ def _calculate_bmi(weight, height):
 	return round(weight / (height_m ** 2), 2)
 
 
+def _split_blood_pressure(blood_pressure):
+	"""The nurse form still captures BP as a single '120/80' string (see
+	front_desk.js), but the core Vital Signs doctype stores it as two
+	structured fields, bp_systolic / bp_diastolic (bp itself is a
+	read_only display field that its own client script normally
+	concatenates from those two - since we're inserting server-side
+	with no client script involved, we fill all three ourselves).
+	Returns (systolic, diastolic, display_string); any part that
+	doesn't parse cleanly comes back as None so a malformed value
+	doesn't hard-fail the whole vitals save.
+	"""
+
+	if not blood_pressure:
+		return None, None, None
+
+	parts = str(blood_pressure).split("/")
+	if len(parts) != 2:
+		return None, None, str(blood_pressure)
+
+	try:
+		systolic = float(parts[0].strip())
+		diastolic = float(parts[1].strip())
+	except (TypeError, ValueError):
+		return None, None, str(blood_pressure)
+
+	return systolic, diastolic, f"{systolic:g}/{diastolic:g}"
+
+
+def _create_vital_signs(encounter_doc, temperature, blood_pressure, pulse,
+	weight, height, spo2, fbs, rbs, notes, bmi):
+	"""Create and submit the actual clinical record for this vitals
+	reading, using Healthcare's own core Vital Signs doctype
+	(is_submittable=1) instead of parking the values only as custom
+	fields on Patient Encounter. Every Save Vitals click is a new
+	reading - matching how Vital Signs is used elsewhere in Healthcare
+	(inpatient rounds, repeat readings, etc.) - rather than a single
+	record that gets edited in place, so nothing here amends or
+	cancels a prior reading.
+
+	spo2 / fbs / rbs live on Vital Signs as Custom Fields (see
+	fixtures/custom_field.json) since the core doctype has no field
+	for them.
+	"""
+
+	systolic, diastolic, bp_display = _split_blood_pressure(blood_pressure)
+
+	vs = frappe.new_doc("Vital Signs")
+	vs.update({
+		"patient": encounter_doc.patient,
+		"appointment": encounter_doc.appointment,
+		"encounter": encounter_doc.name,
+		"company": encounter_doc.get("company"),
+		"signs_date": nowdate(),
+		"signs_time": nowtime(),
+		"temperature": temperature,
+		"pulse": pulse,
+		"bp_systolic": systolic,
+		"bp_diastolic": diastolic,
+		"bp": bp_display,
+		# Vital Signs' "height" field is defined in metres; the nurse
+		# form (and _calculate_bmi) work in centimetres, so convert on
+		# the way in rather than changing the units the nurse types in.
+		"height": (float(height) / 100) if height else None,
+		"weight": weight,
+		"bmi": bmi,
+		"vital_signs_note": notes,
+		"spo2": spo2,
+		"fbs": fbs,
+		"rbs": rbs,
+	})
+	# Consistent with the rest of this file (e.g. create_walkin_encounter,
+	# _create_consultation_invoice): _require_tab_access("nurse") is the
+	# authorization boundary for this whitelisted method, so inserts here
+	# go through the same way other privileged writes in this module do.
+	vs.insert(ignore_permissions=True)
+	vs.submit()
+	return vs
+
+
 @frappe.whitelist()
 def save_vitals(
 	encounter,
@@ -932,13 +1012,26 @@ def save_vitals(
 ):
 	_require_tab_access("nurse")
 
+	encounter_doc = frappe.get_doc("Patient Encounter", encounter)
+	bmi = _calculate_bmi(weight, height)
+
+	vs = _create_vital_signs(
+		encounter_doc, temperature, blood_pressure, pulse,
+		weight, height, spo2, fbs, rbs, notes, bmi,
+	)
+
+	# Cache a flat summary on the Encounter purely so get_queue() can keep
+	# reading the nurse/doctor tabs with a single cheap query instead of
+	# joining out to Vital Signs on every queue refresh. Vital Signs
+	# itself - not these cached fields - is the record of truth; see
+	# vital_signs_record below.
 	doc_updates = {
 		"vitals_temperature": temperature,
 		"vitals_blood_pressure": blood_pressure,
 		"vitals_pulse": pulse,
 		"vitals_weight": weight,
 		"vitals_height": height,
-		"vitals_bmi": _calculate_bmi(weight, height),
+		"vitals_bmi": bmi,
 		"vitals_spo2": spo2,
 		"vitals_fbs": fbs,
 		"vitals_rbs": rbs,
@@ -946,6 +1039,8 @@ def save_vitals(
 
 		"vitals_recorded_by": frappe.session.user,
 		"vitals_recorded_on": now_datetime(),
+
+		"vital_signs_record": vs.name,
 
 		"queue_status": "With Doctor",
 	}
@@ -960,7 +1055,7 @@ def save_vitals(
 		"encounter": encounter,
 	})
 
-	return {"status": "Success"}
+	return {"status": "Success", "vital_signs": vs.name}
 
 
 # =============================================

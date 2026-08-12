@@ -1192,12 +1192,15 @@ function loadQueue() {
 				row.vitals_fbs ? `FBS ${row.vitals_fbs}` : null,
 				row.vitals_rbs ? `RBS ${row.vitals_rbs}` : null
 			].filter(Boolean).join(' · ') || __('No vitals recorded');
+			const vitalsLink = row.vital_signs_record
+				? ` <a href="/app/vital-signs/${row.vital_signs_record}" target="_blank">${__('(view record)')}</a>`
+				: '';
 			body += `
 				<tr>
 					<td>${row.encounter_time || ''}</td>
 					<td>${row.patient_name || ''}</td>
 					<td>${row.practitioner_name || row.practitioner || ''}</td>
-					<td><small>${vitalsSummary}</small></td>
+					<td><small>${vitalsSummary}${vitalsLink}</small></td>
 					<td><button class="btn btn-xs btn-success btn-start-consult" data-name="${row.name}">${__('Start Consultation')}</button></td>
 				</tr>
 			`;

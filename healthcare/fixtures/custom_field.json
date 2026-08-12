@@ -1,0 +1,48 @@
+[
+ {
+  "doctype": "Custom Field",
+  "name": "Vital Signs-spo2",
+  "dt": "Vital Signs",
+  "fieldname": "spo2",
+  "label": "SpO2 (%)",
+  "fieldtype": "Int",
+  "insert_after": "vital_signs_note",
+  "non_negative": 1,
+  "description": "Oxygen saturation. Normal range for a healthy adult at sea level is 95\u2013100%."
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Vital Signs-fbs",
+  "dt": "Vital Signs",
+  "fieldname": "fbs",
+  "label": "FBS (mg/dL)",
+  "fieldtype": "Float",
+  "insert_after": "spo2",
+  "non_negative": 1,
+  "description": "Fasting Blood Sugar. Normal fasting range is roughly 70\u2013100 mg/dL."
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Vital Signs-rbs",
+  "dt": "Vital Signs",
+  "fieldname": "rbs",
+  "label": "RBS (mg/dL)",
+  "fieldtype": "Float",
+  "insert_after": "fbs",
+  "non_negative": 1,
+  "description": "Random Blood Sugar."
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Patient Encounter-vital_signs_record",
+  "dt": "Patient Encounter",
+  "fieldname": "vital_signs_record",
+  "label": "Vital Signs Record",
+  "fieldtype": "Link",
+  "options": "Vital Signs",
+  "insert_after": "vitals_notes",
+  "read_only": 1,
+  "print_hide": 1,
+  "description": "Latest submitted Vital Signs document for this encounter. The vitals_* fields on this doctype are a fast-read cache for the queue UI; this Vital Signs record is the actual clinical record."
+ }
+]
