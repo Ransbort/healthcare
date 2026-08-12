@@ -340,6 +340,7 @@ def create_custom_records():
 	create_sensitivity()
 	create_triage_levels()
 	create_vital_sign_observation_templates()
+	create_view_vitals_client_script()
 	setup_patient_history_settings()
 	setup_service_request_masters()
 	setup_order_status_codes()
@@ -901,6 +902,44 @@ def create_vital_sign_observation_templates():
 		for observation, abbr in vitals
 	]
 	insert_record(records)
+
+
+def create_view_vitals_client_script():
+	"""Add a 'View Vitals' button to the View dropdown on Patient Encounter,
+	next to the existing 'Patient History' button."""
+	if frappe.db.exists("Client Script", "Patient Encounter View Vitals"):
+		return
+
+	script = """frappe.ui.form.on("Patient Encounter", {
+	refresh(frm) {
+		frm.add_custom_button(
+			__("View Vitals"),
+			function () {
+				if (frm.doc.patient) {
+					frappe.set_route("List", "Vital Signs", {
+						patient: frm.doc.patient,
+						encounter: frm.doc.name,
+					});
+				} else {
+					frappe.msgprint(__("Please select Patient"));
+				}
+			},
+			__("View"),
+		);
+	},
+});
+"""
+
+	frappe.get_doc(
+		{
+			"doctype": "Client Script",
+			"name": "Patient Encounter View Vitals",
+			"dt": "Patient Encounter",
+			"view": "Form",
+			"script": script,
+			"enabled": 1,
+		}
+	).insert(ignore_permissions=True)
 
 
 def create_sensitivity():
@@ -2186,114 +2225,40 @@ def get_custom_fields():
 				"reqd": 0,
 				"hidden": 0,
 			},
+		],
+		# Front Desk / Nurse Station: the standard Healthcare "Vital Signs"
+		# doctype covers temperature/pulse/bp_systolic/bp_diastolic/height/
+		# weight/bmi/vital_signs_note out of the box, but has no fields for
+		# SpO2, FBS (Fasting Blood Sugar), or RBS (Random Blood Sugar).
+		# front_desk.py's save_vitals() sets these three directly on the
+		# Vital Signs doc it creates for each nurse-station recording.
+		"Vital Signs": [
 			{
-				"fieldname": "vitals_column_break",
-				"label": "",
-				"fieldtype": "Column Break",
-				"insert_after": "checked_in_at",
-			},
-			{
-				"fieldname": "vitals_temperature",
-				"label": "Temperature (\u00b0C)",
-				"fieldtype": "Float",
-				"insert_after": "vitals_column_break",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_blood_pressure",
-				"label": "Blood Pressure",
-				"fieldtype": "Data",
-				"insert_after": "vitals_temperature",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_pulse",
-				"label": "Pulse (bpm)",
-				"fieldtype": "Int",
-				"insert_after": "vitals_blood_pressure",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_weight",
-				"label": "Weight (kg)",
-				"fieldtype": "Float",
-				"insert_after": "vitals_pulse",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_height",
-				"label": "Height (cm)",
-				"fieldtype": "Float",
-				"insert_after": "vitals_weight",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_bmi",
-				"label": "BMI",
-				"fieldtype": "Float",
-				"insert_after": "vitals_height",
-				"precision": "2",
-				"read_only": 1,
-				"description": "Auto-calculated from Weight and Height by save_vitals() - kg/m\u00b2.",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_spo2",
+				"fieldname": "custom_spo2",
 				"label": "SpO2 (%)",
 				"fieldtype": "Int",
-				"insert_after": "vitals_bmi",
+				"insert_after": "bp",
 				"non_negative": 1,
 				"reqd": 0,
 				"hidden": 0,
 			},
 			{
-				"fieldname": "vitals_fbs",
+				"fieldname": "custom_fbs",
 				"label": "FBS (mg/dL)",
 				"fieldtype": "Float",
-				"insert_after": "vitals_spo2",
+				"insert_after": "custom_spo2",
 				"non_negative": 1,
 				"description": "Fasting Blood Sugar.",
 				"reqd": 0,
 				"hidden": 0,
 			},
 			{
-				"fieldname": "vitals_rbs",
+				"fieldname": "custom_rbs",
 				"label": "RBS (mg/dL)",
 				"fieldtype": "Float",
-				"insert_after": "vitals_fbs",
+				"insert_after": "custom_fbs",
 				"non_negative": 1,
 				"description": "Random Blood Sugar.",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_notes",
-				"label": "Nurse Notes",
-				"fieldtype": "Small Text",
-				"insert_after": "vitals_rbs",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_recorded_by",
-				"label": "Vitals Recorded By",
-				"fieldtype": "Link",
-				"insert_after": "vitals_notes",
-				"options": "User",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_recorded_on",
-				"label": "Vitals Recorded On",
-				"fieldtype": "Datetime",
-				"insert_after": "vitals_recorded_by",
 				"reqd": 0,
 				"hidden": 0,
 			},

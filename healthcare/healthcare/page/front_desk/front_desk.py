@@ -830,21 +830,52 @@ def get_queue(date=None, queue_status=None):
 			"consultation_invoice",
 
 			"checked_in_at",
-
-			"vitals_temperature",
-			"vitals_blood_pressure",
-			"vitals_pulse",
-			"vitals_weight",
-			"vitals_height",
-			"vitals_bmi",
-			"vitals_spo2",
-			"vitals_fbs",
-			"vitals_rbs",
-			"vitals_notes",
 		],
 
 		order_by="encounter_time asc",
 	)
+
+	# Vitals now live on the standard "Vital Signs" doctype (one submitted
+	# doc per nurse-station recording, linked back via its `encounter`
+	# field) rather than as columns on Patient Encounter. Pull the latest
+	# submitted Vital Signs per encounter and fold it into each row under
+	# the same vitals_* keys the front-end already reads, so front_desk.js
+	# doesn't need to change.
+	encounter_ids = [row["name"] for row in rows]
+	if encounter_ids:
+		vitals = frappe.get_all(
+			"Vital Signs",
+			filters={"encounter": ["in", encounter_ids], "docstatus": 1},
+			fields=[
+				"encounter",
+				"temperature",
+				"bp",
+				"pulse",
+				"bmi",
+				"custom_spo2",
+				"custom_fbs",
+				"custom_rbs",
+				"vital_signs_note",
+			],
+			order_by="creation desc",
+		)
+		# order_by desc + first-write-wins gives the latest Vital Signs per
+		# encounter (an encounter can in principle have more than one, e.g.
+		# a re-check).
+		latest_vitals_by_encounter = {}
+		for v in vitals:
+			latest_vitals_by_encounter.setdefault(v["encounter"], v)
+
+		for row in rows:
+			v = latest_vitals_by_encounter.get(row["name"])
+			row["vitals_temperature"] = v["temperature"] if v else None
+			row["vitals_blood_pressure"] = v["bp"] if v else None
+			row["vitals_pulse"] = v["pulse"] if v else None
+			row["vitals_bmi"] = v["bmi"] if v else None
+			row["vitals_spo2"] = v["custom_spo2"] if v else None
+			row["vitals_fbs"] = v["custom_fbs"] if v else None
+			row["vitals_rbs"] = v["custom_rbs"] if v else None
+			row["vitals_notes"] = v["vital_signs_note"] if v else None
 
 	# patient_name stored on the Encounter can be stale/incomplete (e.g.
 	# just a first name) depending on what was on the Patient record at
@@ -897,24 +928,47 @@ def send_to_nurse(encounter):
 	return {"status": "Success"}
 
 
-def _calculate_bmi(weight, height):
+def _calculate_bmi(weight, height_cm):
 	"""BMI = weight(kg) / height(m)^2. Computed server-side (rather than
 	trusting a client-supplied value) so it can never drift out of sync
-	with the weight/height actually saved on the encounter. Returns None
-	if either input is missing, non-numeric, or height is non-positive
-	(would otherwise divide by zero / produce a nonsense negative BMI)."""
+	with the weight/height actually saved on the Vital Signs doc. Returns
+	None if either input is missing, non-numeric, or height is
+	non-positive (would otherwise divide by zero / produce a nonsense
+	negative BMI). height_cm is in centimetres, matching what the nurse
+	station form collects."""
 
 	try:
 		weight = float(weight)
-		height = float(height)
+		height_cm = float(height_cm)
 	except (TypeError, ValueError):
 		return None
 
-	if not weight or not height or height <= 0:
+	if not weight or not height_cm or height_cm <= 0:
 		return None
 
-	height_m = height / 100
+	height_m = height_cm / 100
 	return round(weight / (height_m ** 2), 2)
+
+
+def _split_blood_pressure(blood_pressure):
+	"""The nurse station form still collects blood pressure as one
+	"120/80" text field, but the standard Vital Signs doctype stores it
+	as separate bp_systolic/bp_diastolic numbers. Split it here rather
+	than changing the front-end. Returns (systolic, diastolic), either or
+	both of which may be None if the value is missing or not in
+	"NNN/NNN" form."""
+
+	if not blood_pressure:
+		return None, None
+
+	parts = str(blood_pressure).split("/")
+	if len(parts) != 2:
+		return None, None
+
+	try:
+		return float(parts[0].strip()), float(parts[1].strip())
+	except ValueError:
+		return None, None
 
 
 @frappe.whitelist()
@@ -932,26 +986,47 @@ def save_vitals(
 ):
 	_require_tab_access("nurse")
 
-	doc_updates = {
-		"vitals_temperature": temperature,
-		"vitals_blood_pressure": blood_pressure,
-		"vitals_pulse": pulse,
-		"vitals_weight": weight,
-		"vitals_height": height,
-		"vitals_bmi": _calculate_bmi(weight, height),
-		"vitals_spo2": spo2,
-		"vitals_fbs": fbs,
-		"vitals_rbs": rbs,
-		"vitals_notes": notes,
+	encounter_doc = frappe.db.get_value(
+		"Patient Encounter", encounter, ["patient", "appointment"], as_dict=True
+	)
+	bp_systolic, bp_diastolic = _split_blood_pressure(blood_pressure)
+	default_company = frappe.defaults.get_global_default("company")
 
-		"vitals_recorded_by": frappe.session.user,
-		"vitals_recorded_on": now_datetime(),
+	vitals_doc = frappe.get_doc({
+		"doctype": "Vital Signs",
+		"naming_series": "HLC-VTS-.YYYY.-",
 
-		"queue_status": "With Doctor",
-	}
+		"patient": encounter_doc.patient,
+		"appointment": encounter_doc.appointment,
+		"encounter": encounter,
+		"company": default_company,
 
-	for field, value in doc_updates.items():
-		frappe.db.set_value("Patient Encounter", encounter, field, value)
+		"signs_date": nowdate(),
+		"signs_time": nowtime(),
+
+		"temperature": temperature,
+		"pulse": pulse,
+		"bp_systolic": bp_systolic,
+		"bp_diastolic": bp_diastolic,
+		# bp_systolic/diastolic are the real stored values; "bp" is only a
+		# read-only display column that nothing in the standard Vital
+		# Signs controller populates automatically, so set it explicitly
+		# from the same text the nurse typed.
+		"bp": blood_pressure,
+		"height": (float(height) / 100) if height else None,
+		"weight": weight,
+		"bmi": _calculate_bmi(weight, height),
+
+		"custom_spo2": spo2,
+		"custom_fbs": fbs,
+		"custom_rbs": rbs,
+
+		"vital_signs_note": notes,
+	})
+	vitals_doc.insert(ignore_permissions=True)
+	vitals_doc.submit()
+
+	frappe.db.set_value("Patient Encounter", encounter, "queue_status", "With Doctor")
 
 	patient_name = frappe.db.get_value("Patient Encounter", encounter, "patient_name")
 	_notify("queue_update", {
