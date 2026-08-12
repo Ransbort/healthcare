@@ -56,30 +56,114 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 top: 0;
                 z-index: 100;
                 background: white;
-                padding-bottom: 20px;
+                padding-bottom: 16px;
                 margin-bottom: 20px;
             }
 
-            .search-section {
+            /* --- Toolbar: title + actions --- */
+            .lab-toolbar {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding-bottom: 16px;
+                margin-bottom: 16px;
+                border-bottom: 1px solid #e9ecef;
+            }
+
+            .lab-toolbar-title {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+
+            .lab-toolbar-title .icon-badge {
+                width: 40px;
+                height: 40px;
+                border-radius: 10px;
+                background: #f0f1fe;
+                color: var(--primary-color);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 17px;
+                flex-shrink: 0;
+            }
+
+            .lab-toolbar-title h4 {
+                margin: 0;
+                font-size: 1.2rem;
+                font-weight: 700;
+                color: #1a1a2e;
+                line-height: 1.3;
+            }
+
+            .lab-toolbar-title .lab-toolbar-subtitle {
+                font-size: 0.83rem;
+                color: #868e96;
+                margin-top: 1px;
+            }
+
+            .lab-toolbar-actions {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .btn-icon {
+                width: 38px;
+                height: 38px;
+                border-radius: 8px;
+                border: 1px solid #dee2e6;
+                background: white;
+                color: #495057;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                font-size: 0.95rem;
+            }
+
+            .btn-icon:hover {
+                background: #f8f9fa;
+                border-color: var(--primary-color);
+                color: var(--primary-color);
+            }
+
+            .btn-new-request {
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                padding: 25px;
-                border-radius: 12px;
-                margin-bottom: 20px;
-                color: white;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                color: white !important;
+                border: none;
+                padding: 9px 18px;
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 0.88rem;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                transition: opacity 0.15s ease;
             }
 
-            .search-section h4 {
+            .btn-new-request:hover {
+                opacity: 0.9;
                 color: white;
-                margin-bottom: 15px;
-                font-weight: 600;
-                font-size: 1.1rem;
+            }
+
+            /* --- Filter card --- */
+            .lab-wrapper .search-section {
+                background: #ffffff !important;
+                background-image: none !important;
+                border: 1px solid #e9ecef;
+                border-radius: 12px;
+                padding: 20px 20px 14px;
+                margin-bottom: 4px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
             }
 
             .search-input-group {
                 display: grid;
                 grid-template-columns: 1fr 1fr 1fr auto auto;
-                gap: 15px;
+                gap: 14px;
                 align-items: end;
             }
 
@@ -91,19 +175,44 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 margin-bottom: 0;
             }
 
-            .search-input-group label {
-                color: white !important;
+            .lab-wrapper .search-input-group label {
+                color: #495057 !important;
                 font-weight: 500;
+                font-size: 0.83rem;
             }
 
-            .btn-clear {
-                background: rgba(255, 255, 255, 0.2) !important;
-                color: white !important;
-                border: 1px solid rgba(255, 255, 255, 0.3) !important;
+            .search-input-group .form-control {
+                border-radius: 8px;
+                border: 1px solid #dee2e6;
             }
 
-            .btn-clear:hover {
-                background: rgba(255, 255, 255, 0.3) !important;
+            #search-btn {
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 18px;
+            }
+
+            #clear-btn {
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 16px;
+                background: transparent;
+                border: 1px solid #dee2e6;
+                color: #495057;
+            }
+
+            #clear-btn:hover {
+                background: #f8f9fa;
+            }
+
+            /* --- Last updated --- */
+            .lab-wrapper .last-updated {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 0.78rem;
+                color: #adb5bd !important;
+                padding: 10px 2px 2px;
             }
 
             .tabs-section {
@@ -422,6 +531,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             }
 
             .empty-state {
+                grid-column: 1 / -1;
                 text-align: center;
                 padding: 60px 20px;
                 color: #6c757d;
@@ -447,6 +557,17 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             @media (max-width: 768px) {
                 .lab-wrapper {
                     padding: 15px;
+                }
+
+                .lab-toolbar {
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 12px;
+                }
+
+                .lab-toolbar-actions {
+                    width: 100%;
+                    justify-content: flex-end;
                 }
 
                 .search-input-group {
@@ -479,18 +600,39 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
     let html = `
         <div class="lab-wrapper">
             <div class="sticky-header">
+                <div class="lab-toolbar">
+                    <div class="lab-toolbar-title">
+                        <div class="icon-badge"><i class="fa fa-flask"></i></div>
+                        <div>
+                            <h4>Laboratory Portal</h4>
+                            <div class="lab-toolbar-subtitle">Search and manage lab requests</div>
+                        </div>
+                    </div>
+                    <div class="lab-toolbar-actions">
+                        <button class="btn-icon" id="refresh-btn" title="Refresh">
+                            <i class="fa fa-refresh"></i>
+                        </button>
+                        <button class="btn-new-request" id="new-lab-request-btn">
+                            <i class="fa fa-plus"></i> New Lab Request
+                        </button>
+                    </div>
+                </div>
+
                 <div class="search-section">
-                    <h4><i class="fa fa-flask"></i> Laboratory Search</h4>
                     <div class="search-input-group">
                         <div class="frappe-control" data-fieldname="search_patient"></div>
                         <div class="frappe-control" data-fieldname="search_date"></div>
                         <div class="frappe-control" data-fieldname="search_encounter"></div>
-                        <button class="btn btn-primary btn-lg" id="search-btn" style="background: white; color: #667eea; border: none; font-weight: 600;">
+                        <button class="btn btn-primary" id="search-btn">
                             <i class="fa fa-search"></i> Search
                         </button>
-                        <button class="btn btn-clear btn-lg" id="clear-btn">
-                            <i class="fa fa-refresh"></i> Refresh
+                        <button class="btn" id="clear-btn">
+                            Clear
                         </button>
+                    </div>
+                    <div class="last-updated">
+                        <i class="fa fa-clock-o"></i>
+                        <span id="last-updated-time">Not loaded yet</span>
                     </div>
                 </div>
 
@@ -551,6 +693,20 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
 
     // Current view mode (card or list)
     let currentView = 'card';
+
+    // Tracks how many of the 3 parallel loads (requested/pending/completed)
+    // are still in flight, so the "Last updated" timestamp only refreshes
+    // once everything currently on screen is current.
+    let pendingLoads = 0;
+
+    function markLoadDone() {
+        pendingLoads = Math.max(0, pendingLoads - 1);
+        if (pendingLoads === 0) {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            page.main.find('#last-updated-time').text(`Updated at ${timeStr}`);
+        }
+    }
 
     let search_patient_field = frappe.ui.form.make_control({
         parent: page.main.find('[data-fieldname="search_patient"]'),
@@ -691,6 +847,15 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         loadLabs();
     });
 
+    // Toolbar refresh icon: reloads with current filters, gives a quick
+    // spin for feedback (distinct from "Clear", which also resets filters).
+    page.main.find('#refresh-btn').on('click', function() {
+        const $icon = $(this).find('i');
+        $icon.addClass('fa-spin');
+        loadLabs();
+        setTimeout(() => $icon.removeClass('fa-spin'), 600);
+    });
+
     page.main.find('#filter-completed-btn').on('click', function() {
         loadCompletedLabs(
             search_patient_field.get_value(),
@@ -699,11 +864,91 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         );
     });
 
+    page.main.find('#new-lab-request-btn').on('click', function() {
+        openNewLabRequestDialog();
+    });
+
+    // Direct lab requests: no Patient Encounter / Lab Prescription involved.
+    // Creates a standalone Draft Lab Test via create_lab_request(), which
+    // then shows up in the Requested tab alongside encounter-sourced rows
+    // (get_requested_labs merges both sources - see lab_portal.py).
+    function openNewLabRequestDialog() {
+        frappe.call({
+            method: 'healthcare.healthcare.page.lab_portal.lab_portal.get_lab_test_templates',
+            callback: function(r) {
+                const templates = r.message || [];
+
+                const dialog = new frappe.ui.Dialog({
+                    title: __('New Lab Request'),
+                    fields: [
+                        {
+                            fieldtype: 'Link',
+                            fieldname: 'patient',
+                            options: 'Patient',
+                            label: 'Patient',
+                            reqd: 1
+                        },
+                        {
+                            fieldtype: 'Select',
+                            fieldname: 'lab_test_code',
+                            label: 'Lab Test',
+                            options: templates.map(t => ({
+                                label: `${t.lab_test_name || t.name} (${format_currency(t.rate)})`,
+                                value: t.name
+                            })),
+                            reqd: 1
+                        },
+                        {
+                            fieldtype: 'Section Break'
+                        },
+                        {
+                            fieldtype: 'Small Text',
+                            fieldname: 'lab_test_comment',
+                            label: 'Comment (Optional)'
+                        }
+                    ],
+                    primary_action_label: __('Create Request'),
+                    primary_action: function(values) {
+                        frappe.call({
+                            method: 'healthcare.healthcare.page.lab_portal.lab_portal.create_lab_request',
+                            args: {
+                                patient: values.patient,
+                                lab_test_code: values.lab_test_code,
+                                lab_test_comment: values.lab_test_comment || null
+                            },
+                            freeze: true,
+                            freeze_message: __('Creating lab request...'),
+                            callback: function(r) {
+                                if (r.message && r.message.status === 'Success') {
+                                    frappe.show_alert({
+                                        message: __('Lab request created.'),
+                                        indicator: 'green'
+                                    }, 6);
+                                    dialog.hide();
+                                    loadLabs();
+                                }
+                            },
+                            error: function(r) {
+                                frappe.show_alert({
+                                    message: r.message || __('Error creating lab request'),
+                                    indicator: 'red'
+                                }, 10);
+                            }
+                        });
+                    }
+                });
+
+                dialog.show();
+            }
+        });
+    }
+
     function loadLabs() {
         const patient = search_patient_field.get_value();
         const encounter = search_encounter_field.get_value();
         const date = search_date_field.get_value();
-        
+
+        pendingLoads = 3;
         loadRequestedLabs(patient, encounter, date);
         loadPendingLabs(patient, encounter, date);
         loadCompletedLabs(patient, encounter, completed_date_field.get_value());
@@ -721,6 +966,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 const labs = r.message || [];
                 window.lastRequestedLabs = labs;
                 displayRequestedLabs(labs);
+                markLoadDone();
             }
         });
     }
@@ -739,6 +985,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 const labs = r.message || [];
                 window.lastPendingLabs = labs;
                 displayPendingLabs(labs);
+                markLoadDone();
             }
         });
     }
@@ -755,6 +1002,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 const labs = r.message || [];
                 window.lastCompletedLabs = labs;
                 displayCompletedLabs(labs);
+                markLoadDone();
             }
         });
     }
@@ -880,7 +1128,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 <tbody>
         `;
 
-        labs.forEach(function(lab) {
+        labs.forEach(function(lab, index) {
             const priorityClass = lab.priority === 'High' ? 'priority-high' : 
                                  lab.priority === 'Medium' ? 'priority-medium' : 'priority-low';
             
@@ -894,7 +1142,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                     <td>${lab.priority ? `<span class="priority-badge ${priorityClass}">${lab.priority}</span>` : '-'}</td>
                     <td>
                         <div class="lab-list-actions">
-                            <button class="btn btn-success btn-sm btn-accept-lab" data-prescription-id="${lab.prescription_id}">
+                            <button class="btn btn-success btn-sm btn-accept-lab" data-idx="${index}">
                                 <i class="fa fa-check"></i> Accept
                             </button>
                         </div>
@@ -910,10 +1158,14 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
 
         container.html(tableHtml);
 
+        // Keyed by row index, not lab.prescription_id - direct-sourced rows
+        // (see lab_portal.py get_requested_labs) all have prescription_id
+        // null, which would collide if looked up by that field whenever
+        // more than one direct request is showing at once.
         container.find('.btn-accept-lab').on('click', function(e) {
             e.stopPropagation();
-            const prescriptionId = $(this).data('prescription-id');
-            const lab = labs.find(l => l.prescription_id === prescriptionId);
+            const idx = $(this).data('idx');
+            const lab = labs[idx];
             if (lab) {
                 acceptLabRequest(lab);
             }
@@ -1338,17 +1590,28 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
     }
 
     function acceptLabRequest(lab) {
+        // Direct-sourced rows (no Patient Encounter behind them - see
+        // create_lab_request() in lab_portal.py) are invoiced immediately
+        // on creation now, so they normally skip Requested Labs entirely
+        // and this branch shouldn't fire in practice. Left in place as a
+        // fallback for any direct Lab Test that ends up uninvoiced.
+        const isDirect = lab.source === 'direct';
+
         frappe.confirm(
             __('Accept this lab request and create invoice for {0}?', [lab.patient_name]),
             function() {
                 frappe.call({
-                    method: 'healthcare.healthcare.page.lab_portal.lab_portal.accept_lab_request',
-                    args: {
-                        prescription_id: lab.prescription_id,
-                        patient_id: lab.patient,
-                        encounter_id: lab.encounter_id,
-                        lab_test_code: lab.lab_test_code
-                    },
+                    method: isDirect
+                        ? 'healthcare.healthcare.page.lab_portal.lab_portal.accept_direct_lab_request'
+                        : 'healthcare.healthcare.page.lab_portal.lab_portal.accept_lab_request',
+                    args: isDirect
+                        ? { lab_test_name: lab.lab_test_name_id }
+                        : {
+                              prescription_id: lab.prescription_id,
+                              patient_id: lab.patient,
+                              encounter_id: lab.encounter_id,
+                              lab_test_code: lab.lab_test_code
+                          },
                     freeze: true,
                     freeze_message: __('Creating invoice...'),
                     callback: function(r) {
@@ -1386,5 +1649,4 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
 
     loadLabs();
 };
-
 //# sourceURL=lab_portal.js

@@ -2,39 +2,39 @@
 # For license information, please see license.txt
 """
 Backend for the Lab Portal page (page/lab_portal/lab_portal.js).
-Schema notes confirmed against the real site (see console checks in chat):
-- `Patient Encounter.diagnosis` is a Table MultiSelect field backed by the
-  child doctype `Patient Encounter Diagnosis`, NOT a plain column - it can't
-  be selected directly as `pe.diagnosis` in raw SQL. Pulled via a correlated
-  GROUP_CONCAT subquery instead (see _diagnosis_subquery below).
-- `Patient Encounter Diagnosis.diagnosis` is a Link to the `Diagnosis`
-  doctype, and Diagnosis records are named by their diagnosis text itself,
-  so the linked value doubles as display text - no extra join needed.
-Everything else here was already verified working:
-- `Patient Encounter` has a child table `lab_test_prescription`
-  (child doctype `Lab Prescription`) with fields: lab_test_code,
-  lab_test_comment, invoiced (Check).
-- `Lab Prescription` has a CUSTOM field `custom_priority` (Select: High/
-  Medium/Low) and a CUSTOM field `custom_lab_test` (Link -> Lab Test) that
-  gets set once accept_lab_request() creates the Lab Test doc.
-- `Lab Test Template` has an `item` field linking to a stock/service Item
-  (standard in ERPNext Healthcare).
-- `Lab Test` has fields: patient, template, prescription (Link -> Lab
-  Prescription, not Patient Encounter), status, invoiced (Check). It has NO
-  built-in Sales Invoice link - `custom_invoice` (Link -> Sales Invoice) is
-  a CUSTOM field added specifically for this portal (see setup.py).
-- `Lab Test.patient_sex` (and patient_name) are MANDATORY fields on the
-  doctype, presumably meant to auto-populate via fetch_from when set through
-  the desk UI. That fetch does NOT reliably fire when a doc is constructed
-  and inserted directly server-side (frappe.get_doc({...}).insert()) - so
-  accept_lab_request() below fetches these from the Patient record itself
-  and sets them explicitly, rather than relying on fetch_from.
-- Payment status is read off the linked Sales Invoice's `status` field via
-  Lab Test.custom_invoice.
+
+Two request sources feed each tab:
+  1. Encounter-sourced: Patient Encounter -> Lab Prescription -> sits in
+     Requested Labs until a lab scientist accepts it into a Lab Test +
+     Sales Invoice via accept_lab_request().
+  2. Direct-sourced: a standalone Lab Test with no Patient Encounter,
+     created via create_lab_request() by a lab scientist who doesn't
+     need a doctor's encounter/prescription first. Since creating it IS
+     the lab scientist's acceptance, it's invoiced immediately on
+     creation and goes straight to Pending Labs, skipping Requested Labs
+     entirely. Identified by Lab Test.prescription IS NULL.
+
+Both are queried separately (different columns) then normalized to a common
+row shape with a `source` field ("encounter" | "direct") so the frontend
+knows which accept endpoint to call.
+
+Schema notes:
+- `Patient Encounter.diagnosis` is a Table MultiSelect (child doctype
+  `Patient Encounter Diagnosis`), not a plain column - pulled via a
+  correlated GROUP_CONCAT subquery (_DIAGNOSIS_SUBQUERY).
+- `Lab Prescription` has custom fields `custom_priority` and
+  `custom_lab_test` (set once accepted).
+- `Lab Test` has no built-in Sales Invoice link - `custom_invoice` is a
+  custom field added for this portal.
+- `Lab Test.patient_sex`/`patient_name` are mandatory but fetch_from doesn't
+  reliably fire on server-side inserts, so both accept functions set them
+  explicitly from the Patient record.
+- Payment status is read off the linked Sales Invoice's `status` field.
 """
 import frappe
 from frappe import _
 from frappe.utils import today
+
 
 def _notify(event, payload):
 	"""Broadcast a realtime event to everyone listening in this site."""
@@ -42,11 +42,9 @@ def _notify(event, payload):
 
 
 def notify_new_lab_requests(doc, method=None):
-	"""Hooked on Patient Encounter on_update. Encounters aren't always
-	submitted (docstatus can stay 0 indefinitely in walk-in workflows),
-	so this can't rely on on_submit - it has to fire on every save and
-	diff against the pre-save state itself to avoid re-notifying on
-	unrelated re-saves of the same encounter.
+	"""Hooked on Patient Encounter on_update. Fires on every save (not just
+	submit, since docstatus can stay 0 in walk-in workflows) and diffs
+	against the pre-save state to avoid re-notifying on unrelated saves.
 	"""
 	before_save = doc.get_doc_before_save()
 	old_names = set()
@@ -67,9 +65,9 @@ def notify_new_lab_requests(doc, method=None):
 		"encounter": doc.name,
 	})
 
-# Correlated subquery: aggregates every diagnosis linked to an encounter
-# into one comma-separated string. `pe` must already be joined/aliased in
-# the outer query for the `pe.name` reference here to resolve.
+
+# Aggregates every diagnosis linked to an encounter into one
+# comma-separated string. Requires `pe` aliased in the outer query.
 _DIAGNOSIS_SUBQUERY = """
 	(
 		SELECT GROUP_CONCAT(ped.diagnosis SEPARATOR ', ')
@@ -77,6 +75,8 @@ _DIAGNOSIS_SUBQUERY = """
 		WHERE ped.parent = pe.name
 	) AS diagnosis
 """
+
+
 def _lab_search_conditions(search_patient, search_encounter, search_date, date_field="pe.encounter_date"):
 	conditions = []
 	values = {}
@@ -90,17 +90,118 @@ def _lab_search_conditions(search_patient, search_encounter, search_date, date_f
 		conditions.append(f"{date_field} = %(search_date)s")
 		values["search_date"] = search_date
 	return conditions, values
-	
+
+
+def _direct_search_conditions(search_patient, search_encounter, search_date, date_field="lt.creation"):
+	"""Same shape as _lab_search_conditions but against Lab Test directly.
+	search_encounter is ignored - direct requests have no encounter.
+	"""
+	conditions = []
+	values = {}
+	if search_patient:
+		conditions.append("(lt.patient LIKE %(search_patient)s OR lt.patient_name LIKE %(search_patient)s)")
+		values["search_patient"] = f"%{search_patient}%"
+	if search_date:
+		conditions.append(f"DATE({date_field}) = %(search_date)s")
+		values["search_date"] = search_date
+	return conditions, values
+
+
+def _normalize_direct_row(row):
+	"""Reshape a direct Lab Test row into the same keys as encounter-sourced
+	rows so lab_portal.js can render both with one code path.
+
+	Uses .get() instead of [] since the three callers' SQL SELECTs have
+	drifted out of sync before (a missing column raised KeyError here).
+	"""
+	return {
+		"prescription_id": None,
+		"lab_test_name_id": row.get("lab_test_name_id"),  # the Lab Test's own name - used to accept/view it
+		"lab_test_code": row.get("lab_test_code"),
+		"lab_test_comment": row.get("lab_test_comment"),
+		"lab_test_name": row.get("lab_test_name"),
+		"priority": None,
+		"custom_lab_test": row.get("custom_lab_test"),
+		"encounter_id": None,
+		"patient": row.get("patient"),
+		"patient_name": row.get("patient_name"),
+		"encounter_date": row.get("encounter_date"),
+		"practitioner": None,
+		"diagnosis": None,
+		"source": "direct",
+	}
+
+
+@frappe.whitelist()
+def get_lab_test_templates():
+	"""Active Lab Test Templates for the 'New Lab Request' picker."""
+	templates = frappe.get_all(
+		"Lab Test Template",
+		filters={"disabled": 0},
+		fields=["name", "lab_test_name", "department", "item"],
+		order_by="lab_test_name asc",
+	)
+	for t in templates:
+		t["rate"] = frappe.db.get_value("Item Price", {"item_code": t.item}, "price_list_rate") or 0
+	return templates
+
+
+@frappe.whitelist()
+def create_lab_request(patient, lab_test_code, lab_test_comment=None):
+	"""Create a Lab Test requested directly by a lab scientist, with no
+	Patient Encounter involved. Unlike encounter-sourced requests (which
+	sit in Requested Labs until a lab scientist accepts them), a direct
+	request IS the lab scientist's own acceptance - so it's invoiced
+	immediately here and goes straight to Pending Labs (awaiting payment)
+	rather than through Requested Labs.
+	"""
+	if not patient:
+		frappe.throw(_("Please select a patient"))
+	if not lab_test_code:
+		frappe.throw(_("Please select a lab test"))
+
+	patient_doc = frappe.get_doc("Patient", patient)
+
+	lab_test = frappe.get_doc(
+		{
+			"doctype": "Lab Test",
+			"patient": patient,
+			"patient_name": patient_doc.patient_name,
+			"patient_sex": patient_doc.sex,
+			"template": lab_test_code,
+			"lab_test_comment": lab_test_comment,
+			"status": "Draft",
+		}
+	)
+	lab_test.insert(ignore_permissions=True)
+
+	invoice = _create_lab_invoice(
+		patient_doc, lab_test_code, reference_dt="Lab Test", reference_dn=lab_test.name
+	)
+	lab_test.db_set("custom_invoice", invoice.name)
+
+	_notify("queue_update", {
+		"department": "laboratory",
+		"message": f"New direct lab request for {patient_doc.patient_name}",
+		"lab_test": lab_test.name,
+	})
+
+	return {"status": "Success", "lab_test_name": lab_test.name, "invoice_name": invoice.name}
+
+
 @frappe.whitelist()
 def get_requested_labs(search_patient=None, search_encounter=None, search_date=None):
-	"""Lab tests prescribed on an encounter but not yet accepted/invoiced."""
+	"""Lab tests requested but not yet accepted/invoiced - merges
+	encounter-sourced (Lab Prescription) and direct-sourced (standalone
+	Lab Test) requests."""
 	conditions, values = _lab_search_conditions(search_patient, search_encounter, search_date)
 	conditions.insert(0, "lp.invoiced = 0")
 	where_clause = " AND ".join(conditions)
-	return frappe.db.sql(
+	encounter_rows = frappe.db.sql(
 		f"""
 		SELECT
 			lp.name AS prescription_id,
+			NULL AS lab_test_name_id,
 			lp.lab_test_code AS lab_test_code,
 			lp.lab_test_comment AS lab_test_comment,
 			COALESCE(ltt.lab_test_name, lp.lab_test_code) AS lab_test_name,
@@ -110,7 +211,8 @@ def get_requested_labs(search_patient=None, search_encounter=None, search_date=N
 			pe.patient_name AS patient_name,
 			pe.encounter_date AS encounter_date,
 			pe.practitioner AS practitioner,
-			{_DIAGNOSIS_SUBQUERY}
+			{_DIAGNOSIS_SUBQUERY},
+			'encounter' AS source
 		FROM `tabLab Prescription` lp
 		INNER JOIN `tabPatient Encounter` pe ON pe.name = lp.parent
 		LEFT JOIN `tabLab Test Template` ltt ON ltt.name = lp.lab_test_code
@@ -120,10 +222,41 @@ def get_requested_labs(search_patient=None, search_encounter=None, search_date=N
 		values,
 		as_dict=True,
 	)
-	
+
+	if search_encounter:
+		# Direct requests have no encounter to match.
+		return encounter_rows
+
+	d_conditions, d_values = _direct_search_conditions(search_patient, search_encounter, search_date)
+	d_conditions[0:0] = ["lt.prescription IS NULL", "lt.custom_invoice IS NULL", "lt.status = 'Draft'"]
+	d_where = " AND ".join(d_conditions)
+	direct_rows = frappe.db.sql(
+		f"""
+		SELECT
+			lt.name AS lab_test_name_id,
+			lt.template AS lab_test_code,
+			lt.lab_test_comment AS lab_test_comment,
+			COALESCE(ltt.lab_test_name, lt.template) AS lab_test_name,
+			NULL AS custom_lab_test,
+			lt.patient AS patient,
+			lt.patient_name AS patient_name,
+			lt.creation AS encounter_date
+		FROM `tabLab Test` lt
+		LEFT JOIN `tabLab Test Template` ltt ON ltt.name = lt.template
+		WHERE {d_where}
+		ORDER BY lt.creation DESC
+		""",
+		d_values,
+		as_dict=True,
+	)
+
+	return encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+
+
 @frappe.whitelist()
 def get_pending_labs(search_patient=None, search_encounter=None, search_date=None):
-	"""Accepted (invoiced) lab tests that haven't been marked Completed yet."""
+	"""Accepted (invoiced) lab tests that haven't been marked Completed yet -
+	merges encounter-sourced and direct-sourced requests."""
 	conditions, values = _lab_search_conditions(search_patient, search_encounter, search_date)
 	conditions[0:0] = [
 		"lp.invoiced = 1",
@@ -131,10 +264,11 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 		"lt.status != 'Completed'",
 	]
 	where_clause = " AND ".join(conditions)
-	rows = frappe.db.sql(
+	encounter_rows = frappe.db.sql(
 		f"""
 		SELECT
 			lp.name AS prescription_id,
+			NULL AS lab_test_name_id,
 			lp.lab_test_code AS lab_test_code,
 			lp.lab_test_comment AS lab_test_comment,
 			COALESCE(ltt.lab_test_name, lp.lab_test_code) AS lab_test_name,
@@ -146,7 +280,8 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 			pe.encounter_date AS encounter_date,
 			pe.practitioner AS practitioner,
 			{_DIAGNOSIS_SUBQUERY},
-			si.status AS invoice_status
+			si.status AS invoice_status,
+			'encounter' AS source
 		FROM `tabLab Prescription` lp
 		INNER JOIN `tabPatient Encounter` pe ON pe.name = lp.parent
 		INNER JOIN `tabLab Test` lt ON lt.name = lp.custom_lab_test
@@ -158,13 +293,49 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 		values,
 		as_dict=True,
 	)
-	for row in rows:
+	for row in encounter_rows:
 		row["payment_status"] = "Paid" if row.pop("invoice_status", None) == "Paid" else "Unpaid"
-	return rows
-	
+
+	if search_encounter:
+		return encounter_rows
+
+	d_conditions, d_values = _direct_search_conditions(search_patient, search_encounter, search_date)
+	d_conditions[0:0] = ["lt.prescription IS NULL", "lt.custom_invoice IS NOT NULL", "lt.status != 'Completed'"]
+	d_where = " AND ".join(d_conditions)
+	direct_rows = frappe.db.sql(
+		f"""
+		SELECT
+			lt.name AS lab_test_name_id,
+			lt.template AS lab_test_code,
+			lt.lab_test_comment AS lab_test_comment,
+			COALESCE(ltt.lab_test_name, lt.template) AS lab_test_name,
+			lt.name AS custom_lab_test,
+			lt.patient AS patient,
+			lt.patient_name AS patient_name,
+			lt.creation AS encounter_date,
+			si.status AS invoice_status
+		FROM `tabLab Test` lt
+		LEFT JOIN `tabLab Test Template` ltt ON ltt.name = lt.template
+		LEFT JOIN `tabSales Invoice` si ON si.name = lt.custom_invoice
+		WHERE {d_where}
+		ORDER BY lt.creation DESC
+		""",
+		d_values,
+		as_dict=True,
+	)
+	normalized_direct = []
+	for r in direct_rows:
+		row = _normalize_direct_row(r)
+		row["payment_status"] = "Paid" if r.get("invoice_status") == "Paid" else "Unpaid"
+		normalized_direct.append(row)
+
+	return encounter_rows + normalized_direct
+
+
 @frappe.whitelist()
 def get_completed_labs(search_patient=None, search_encounter=None, filter_date=None):
-	"""Lab tests with results entered (status Completed)."""
+	"""Lab tests with results entered (status Completed) - merges
+	encounter-sourced and direct-sourced requests."""
 	conditions, values = _lab_search_conditions(
 		search_patient, search_encounter, filter_date, date_field="DATE(lt.modified)"
 	)
@@ -174,10 +345,11 @@ def get_completed_labs(search_patient=None, search_encounter=None, filter_date=N
 		"lt.status = 'Completed'",
 	]
 	where_clause = " AND ".join(conditions)
-	return frappe.db.sql(
+	encounter_rows = frappe.db.sql(
 		f"""
 		SELECT
 			lp.name AS prescription_id,
+			NULL AS lab_test_name_id,
 			lp.lab_test_code AS lab_test_code,
 			COALESCE(ltt.lab_test_name, lp.lab_test_code) AS lab_test_name,
 			lp.custom_lab_test AS custom_lab_test,
@@ -186,7 +358,8 @@ def get_completed_labs(search_patient=None, search_encounter=None, filter_date=N
 			pe.patient_name AS patient_name,
 			pe.encounter_date AS encounter_date,
 			pe.practitioner AS practitioner,
-			{_DIAGNOSIS_SUBQUERY}
+			{_DIAGNOSIS_SUBQUERY},
+			'encounter' AS source
 		FROM `tabLab Prescription` lp
 		INNER JOIN `tabPatient Encounter` pe ON pe.name = lp.parent
 		INNER JOIN `tabLab Test` lt ON lt.name = lp.custom_lab_test
@@ -197,13 +370,43 @@ def get_completed_labs(search_patient=None, search_encounter=None, filter_date=N
 		values,
 		as_dict=True,
 	)
-	
+
+	if search_encounter:
+		return encounter_rows
+
+	d_conditions, d_values = _direct_search_conditions(
+		search_patient, search_encounter, filter_date, date_field="lt.modified"
+	)
+	d_conditions[0:0] = ["lt.prescription IS NULL", "lt.status = 'Completed'"]
+	d_where = " AND ".join(d_conditions)
+	direct_rows = frappe.db.sql(
+		f"""
+		SELECT
+			lt.name AS lab_test_name_id,
+			lt.template AS lab_test_code,
+			lt.lab_test_comment AS lab_test_comment,
+			COALESCE(ltt.lab_test_name, lt.template) AS lab_test_name,
+			lt.name AS custom_lab_test,
+			lt.patient AS patient,
+			lt.patient_name AS patient_name,
+			lt.modified AS encounter_date
+		FROM `tabLab Test` lt
+		LEFT JOIN `tabLab Test Template` ltt ON ltt.name = lt.template
+		WHERE {d_where}
+		ORDER BY lt.modified DESC
+		""",
+		d_values,
+		as_dict=True,
+	)
+
+	return encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+
+
 @frappe.whitelist()
 def accept_lab_request(prescription_id, patient_id, encounter_id, lab_test_code):
-	"""
-	Accept a requested lab test: create + submit a Sales Invoice, create a
-	draft Lab Test, then stamp the originating Lab Prescription row so it
-	shows up under Pending instead of Requested on the next reload.
+	"""Accept an encounter-sourced request: create + submit a Sales Invoice,
+	create a draft Lab Test, and stamp the source Lab Prescription row so
+	it moves from Requested to Pending on the next reload.
 	"""
 	encounter = frappe.get_doc("Patient Encounter", encounter_id)
 	prescription_row = None
@@ -215,58 +418,16 @@ def accept_lab_request(prescription_id, patient_id, encounter_id, lab_test_code)
 		frappe.throw(_("Lab Prescription row {0} not found on encounter {1}").format(prescription_id, encounter_id))
 
 	patient = frappe.get_doc("Patient", patient_id)
-	customer = patient.customer
-	if not customer:
-		frappe.throw(_("Patient {0} has no linked Customer").format(patient_id))
-
-	item_code = frappe.db.get_value("Lab Test Template", lab_test_code, "item")
-	if not item_code:
-		frappe.throw(_("Lab Test Template {0} has no linked Item").format(lab_test_code))
-	rate = frappe.db.get_value("Item Price", {"item_code": item_code}, "price_list_rate") or 0
-	invoice = frappe.get_doc(
-		{
-			"doctype": "Sales Invoice",
-			"customer": customer,
-			"patient": patient_id,
-			"posting_date": today(),
-			# Without this, cashier_portal.py's _get_department_invoices()
-			# has no way to bucket this invoice under Laboratory - it would
-			# fall into "Other Invoices" instead (same issue fixed for
-			# Pharmacy Sales Orders and Rehabilitation invoices).
-			"custom_department": "Laboratory",
-			"items": [
-				{
-					"item_code": item_code,
-					"qty": 1,
-					"rate": rate,
-					"reference_dt": "Patient Encounter",
-					"reference_dn": encounter_id,
-				}
-			],
-		}
-	)
-	invoice.insert(ignore_permissions=True)
-	invoice.submit()
+	invoice = _create_lab_invoice(patient, lab_test_code, reference_dt="Patient Encounter", reference_dn=encounter_id)
 
 	lab_test = frappe.get_doc(
 		{
 			"doctype": "Lab Test",
 			"patient": patient_id,
-			# patient_name/patient_sex are mandatory on Lab Test and don't
-			# reliably auto-populate via fetch_from when the doc is built
-			# and inserted directly here (as opposed to through the desk
-			# UI) - fetch them from the Patient doc explicitly instead of
-			# relying on Frappe to backfill them.
 			"patient_name": patient.patient_name,
 			"patient_sex": patient.sex,
 			"template": lab_test_code,
-			# `prescription` is a Link to Lab Prescription, NOT Patient
-			# Encounter - encounter_id was being written here before,
-			# silently pointing at the wrong doctype's records.
 			"prescription": prescription_row.name,
-			# Lab Test has no "invoice" field - only the boolean `invoiced`
-			# Check. custom_invoice (added in setup.py) is what actually
-			# links back to the Sales Invoice.
 			"custom_invoice": invoice.name,
 			"status": "Draft",
 		}
@@ -279,7 +440,67 @@ def accept_lab_request(prescription_id, patient_id, encounter_id, lab_test_code)
 		"invoice_name": invoice.name,
 		"lab_test_name": lab_test.name,
 	}
-	
+
+
+@frappe.whitelist()
+def accept_direct_lab_request(lab_test_name):
+	"""Accept a direct-sourced request: invoice the existing draft Lab Test
+	and link it via custom_invoice, moving it from Requested to Pending.
+	"""
+	lab_test = frappe.get_doc("Lab Test", lab_test_name)
+	if lab_test.prescription:
+		frappe.throw(_("Lab Test {0} is encounter-sourced, use accept_lab_request instead").format(lab_test_name))
+	if lab_test.custom_invoice:
+		frappe.throw(_("Lab Test {0} is already invoiced").format(lab_test_name))
+
+	patient = frappe.get_doc("Patient", lab_test.patient)
+	invoice = _create_lab_invoice(patient, lab_test.template, reference_dt="Lab Test", reference_dn=lab_test.name)
+
+	lab_test.db_set("custom_invoice", invoice.name)
+	return {
+		"status": "Success",
+		"invoice_name": invoice.name,
+		"lab_test_name": lab_test.name,
+	}
+
+
+def _create_lab_invoice(patient, lab_test_code, reference_dt, reference_dn):
+	"""Shared by both accept functions - builds and submits the Sales
+	Invoice for one lab test line."""
+	customer = patient.customer
+	if not customer:
+		frappe.throw(_("Patient {0} has no linked Customer").format(patient.name))
+
+	item_code = frappe.db.get_value("Lab Test Template", lab_test_code, "item")
+	if not item_code:
+		frappe.throw(_("Lab Test Template {0} has no linked Item").format(lab_test_code))
+	rate = frappe.db.get_value("Item Price", {"item_code": item_code}, "price_list_rate") or 0
+
+	invoice = frappe.get_doc(
+		{
+			"doctype": "Sales Invoice",
+			"customer": customer,
+			"patient": patient.name,
+			"posting_date": today(),
+			# Needed so cashier_portal.py buckets this under Laboratory
+			# instead of "Other Invoices".
+			"custom_department": "Laboratory",
+			"items": [
+				{
+					"item_code": item_code,
+					"qty": 1,
+					"rate": rate,
+					"reference_dt": reference_dt,
+					"reference_dn": reference_dn,
+				}
+			],
+		}
+	)
+	invoice.insert(ignore_permissions=True)
+	invoice.submit()
+	return invoice
+
+
 @frappe.whitelist()
 def get_print_formats(doctype):
 	formats = frappe.get_all(
@@ -291,7 +512,8 @@ def get_print_formats(doctype):
 	if not any(f.name == "Standard" for f in formats):
 		formats.insert(0, {"name": "Standard"})
 	return formats
-	
+
+
 @frappe.whitelist()
 def get_print_content(doctype, docname, print_format=None):
 	html = frappe.get_print(doctype, docname, print_format=print_format or None)
