@@ -313,6 +313,20 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		});
 	});
 
+	// Healthcare Settings' configured default (e.g. "walk-in"), fetched
+	// once and reused everywhere the Check-In form's Appointment Type
+	// would otherwise reset to blank.
+	let defaultAppointmentType = '';
+	frappe.call({
+		method: 'healthcare.healthcare.page.front_desk.front_desk.get_default_appointment_type',
+		callback: function(r) {
+			defaultAppointmentType = r.message || '';
+			if (ci_appointment_type && !ci_appointment_type.get_value()) {
+				ci_appointment_type.set_value(defaultAppointmentType);
+			}
+		}
+	});
+
 	// =============================================
 	// STATE
 	// =============================================
@@ -507,7 +521,14 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			get_query: function() {
 				return {
 					filters: {
-						status: ['!=', 'Cancelled']
+						// Exclude only the statuses that mean "already
+						// dealt with" - Open/Scheduled/Confirmed (and a
+						// blank status) all mean "hasn't arrived yet" and
+						// should stay pickable here. Whitelisting just
+						// "Scheduled" was too narrow - most appointments
+						// in practice sit at "Open" or "Confirmed", not
+						// "Scheduled".
+						status: ['not in', ['Checked In', 'Checked Out', 'Closed', 'Cancelled', 'No Show']]
 					}
 				};
 			},
@@ -518,8 +539,9 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 					setAppointmentFieldsReadOnly(false);
 					ci_practitioner.set_value('');
 					ci_department.set_value('');
-					ci_appointment_type.set_value('');
+					ci_appointment_type.set_value(defaultAppointmentType);
 					ci_time.set_value('');
+					ci_fee.set_value(0);
 					withServerToday(function(t) { ci_date.set_value(t); });
 					return;
 				}
@@ -531,6 +553,19 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 					ci_date.set_value(doc.appointment_date || '');
 					ci_time.set_value(doc.appointment_time || '');
 					setAppointmentFieldsReadOnly(true);
+				});
+
+				// Pull the billable rate the same way the native
+				// invoicing flow prices it, instead of leaving staff to
+				// key it in by hand.
+				frappe.call({
+					method: 'healthcare.healthcare.page.front_desk.front_desk.get_consultation_fee',
+					args: { appointment: name },
+					callback: function(r) {
+						if (r.message) {
+							ci_fee.set_value(r.message.consultation_fee || 0);
+						}
+					}
 				});
 			}
 		},
@@ -548,16 +583,48 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		});
 	}
 
+	// Walk-in path only: an existing appointment already has its own
+	// rate fetched (see ci_appointment's onchange above) - re-fetching
+	// here too would just race that call, so this backs off whenever one
+	// is selected.
+	function refreshWalkinFee() {
+		if (ci_appointment.get_value()) return;
+
+		const practitioner = ci_practitioner.get_value();
+		const appointmentType = ci_appointment_type.get_value();
+		if (!practitioner && !appointmentType) return;
+
+		frappe.call({
+			method: 'healthcare.healthcare.page.front_desk.front_desk.get_consultation_fee',
+			args: {
+				practitioner: practitioner || undefined,
+				appointment_type: appointmentType || undefined,
+				department: ci_department.get_value() || undefined,
+			},
+			callback: function(r) {
+				if (r.message) {
+					ci_fee.set_value(r.message.consultation_fee || 0);
+				}
+			}
+		});
+	}
+
 	let ci_practitioner = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="ci_practitioner"]'),
-		df: { fieldtype: 'Link', fieldname: 'ci_practitioner', options: 'Healthcare Practitioner', label: 'Practitioner' },
+		df: {
+			fieldtype: 'Link', fieldname: 'ci_practitioner', options: 'Healthcare Practitioner', label: 'Practitioner',
+			onchange: refreshWalkinFee
+		},
 		render_input: true
 	});
 	ci_practitioner.refresh();
 
 	let ci_department = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="ci_department"]'),
-		df: { fieldtype: 'Link', fieldname: 'ci_department', options: 'Medical Department', label: 'Department' },
+		df: {
+			fieldtype: 'Link', fieldname: 'ci_department', options: 'Medical Department', label: 'Department',
+			onchange: refreshWalkinFee
+		},
 		render_input: true
 	});
 	ci_department.refresh();
@@ -566,7 +633,10 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	// appointment, its own appointment_type is inherited server-side.
 	let ci_appointment_type = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="ci_appointment_type"]'),
-		df: { fieldtype: 'Link', fieldname: 'ci_appointment_type', options: 'Appointment Type', label: 'Appointment Type' },
+		df: {
+			fieldtype: 'Link', fieldname: 'ci_appointment_type', options: 'Appointment Type', label: 'Appointment Type',
+			onchange: refreshWalkinFee
+		},
 		render_input: true
 	});
 	ci_appointment_type.refresh();
@@ -864,7 +934,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			ci_appointment.set_value('');
 			ci_practitioner.set_value('');
 			ci_department.set_value('');
-			ci_appointment_type.set_value('');
+			ci_appointment_type.set_value(defaultAppointmentType);
 			ci_time.set_value('');
 			setAppointmentFieldsReadOnly(false);
 			withServerToday(function(t) { ci_date.set_value(t); });
@@ -1060,11 +1130,12 @@ function loadQueue() {
 							<div data-vf="bmi-${row.name}"></div>
 						</div>
 						<div class="form-grid">
-							<div data-vf="spo2-${row.name}"></div>
-							<div data-vf="fbs-${row.name}"></div>
-							<div data-vf="rbs-${row.name}"></div>
+							<div data-vf="resp-${row.name}"></div>
+							<div data-vf="tongue-${row.name}"></div>
+							<div data-vf="abdomen-${row.name}"></div>
 						</div>
 						<div class="form-grid-2">
+							<div data-vf="reflexes-${row.name}"></div>
 							<div data-vf="notes-${row.name}"></div>
 						</div>
 						<button class="btn btn-success btn-sm btn-save-vitals" data-name="${row.name}">
@@ -1100,12 +1171,14 @@ function loadQueue() {
 			// save_vitals() -> _calculate_bmi(), never trusted from here.
 			const bmi = frappe.ui.form.make_control({ parent: container.find(`[data-vf="bmi-${name}"]`), df: { fieldtype: 'Float', fieldname: 'bmi', label: 'BMI', precision: 2, read_only: 1, description: __('Auto-calculated from weight & height') }, render_input: true });
 			bmi.refresh();
-			const spo2 = frappe.ui.form.make_control({ parent: container.find(`[data-vf="spo2-${name}"]`), df: { fieldtype: 'Int', fieldname: 'spo2', label: 'SpO2 (%)' }, render_input: true });
-			spo2.refresh();
-			const fbs = frappe.ui.form.make_control({ parent: container.find(`[data-vf="fbs-${name}"]`), df: { fieldtype: 'Float', fieldname: 'fbs', label: 'FBS (mg/dL)' }, render_input: true });
-			fbs.refresh();
-			const rbs = frappe.ui.form.make_control({ parent: container.find(`[data-vf="rbs-${name}"]`), df: { fieldtype: 'Float', fieldname: 'rbs', label: 'RBS (mg/dL)' }, render_input: true });
-			rbs.refresh();
+			const resp = frappe.ui.form.make_control({ parent: container.find(`[data-vf="resp-${name}"]`), df: { fieldtype: 'Data', fieldname: 'resp', label: 'Respiratory Rate' }, render_input: true });
+			resp.refresh();
+			const tongue = frappe.ui.form.make_control({ parent: container.find(`[data-vf="tongue-${name}"]`), df: { fieldtype: 'Select', fieldname: 'tongue', label: 'Tongue', options: '\nCoated\nVery Coated\nNormal\nFurry\nCuts' }, render_input: true });
+			tongue.refresh();
+			const abdomen = frappe.ui.form.make_control({ parent: container.find(`[data-vf="abdomen-${name}"]`), df: { fieldtype: 'Select', fieldname: 'abdomen', label: 'Abdomen', options: '\nNormal\nBloated\nFull\nFluid\nConstipated' }, render_input: true });
+			abdomen.refresh();
+			const reflexes = frappe.ui.form.make_control({ parent: container.find(`[data-vf="reflexes-${name}"]`), df: { fieldtype: 'Select', fieldname: 'reflexes', label: 'Reflexes', options: '\nNormal\nHyper\nVery Hyper\nOne Sided' }, render_input: true });
+			reflexes.refresh();
 			const notes = frappe.ui.form.make_control({ parent: container.find(`[data-vf="notes-${name}"]`), df: { fieldtype: 'Data', fieldname: 'notes', label: 'Notes' }, render_input: true });
 			notes.refresh();
 
@@ -1122,7 +1195,7 @@ function loadQueue() {
 			if (weight.$input) weight.$input.on('change input', recalcBmiPreview);
 			if (height.$input) height.$input.on('change input', recalcBmiPreview);
 
-			formEl.data('controls', { temp, bp, pulse, weight, height, bmi, spo2, fbs, rbs, notes });
+			formEl.data('controls', { temp, bp, pulse, weight, height, bmi, resp, tongue, abdomen, reflexes, notes });
 		});
 
 		container.find('.btn-save-vitals').on('click', function() {
@@ -1139,9 +1212,10 @@ function loadQueue() {
 					pulse: c.pulse.get_value(),
 					weight: c.weight.get_value(),
 					height: c.height.get_value(),
-					spo2: c.spo2.get_value(),
-					fbs: c.fbs.get_value(),
-					rbs: c.rbs.get_value(),
+					respiratory_rate: c.resp.get_value(),
+					tongue: c.tongue.get_value(),
+					abdomen: c.abdomen.get_value(),
+					reflexes: c.reflexes.get_value(),
 					notes: c.notes.get_value()
 				},
 				freeze: true,
@@ -1189,10 +1263,7 @@ function loadQueue() {
 				row.vitals_temperature ? `${row.vitals_temperature}°C` : null,
 				row.vitals_blood_pressure || null,
 				row.vitals_pulse ? `${row.vitals_pulse} bpm` : null,
-				row.vitals_spo2 ? `SpO2 ${row.vitals_spo2}%` : null,
-				row.vitals_bmi ? `BMI ${row.vitals_bmi}` : null,
-				row.vitals_fbs ? `FBS ${row.vitals_fbs}` : null,
-				row.vitals_rbs ? `RBS ${row.vitals_rbs}` : null
+				row.vitals_bmi ? `BMI ${row.vitals_bmi}` : null
 			].filter(Boolean).join(' · ') || __('No vitals recorded');
 			body += `
 				<tr>

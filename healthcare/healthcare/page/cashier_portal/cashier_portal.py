@@ -19,6 +19,12 @@ from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice, 
 # Sales Order called `custom_department` with options:
 #   Pharmacy, Laboratory, Rehabilitation   (blank/other -> "Other Invoices" tab)
 #
+# front_desk.py's _create_consultation_invoice() tags its invoices
+# custom_department="Consultation" - there's no dedicated tab for that here,
+# so those fall into "Other Invoices" along with anything else untagged
+# (see the exclude_departments branch in _get_department_invoices below and
+# the "other_invoices" query in get_all_pending_payments).
+#
 # If you already tag department differently (e.g. by Item Group, Cost Center,
 # or Healthcare "Medical Department" link), just change the filters in
 # get_patient_data / get_customer_data below - the rest of the file doesn't
@@ -128,7 +134,9 @@ def _get_department_invoices(party_id, party_type, department=None, exclude_depa
     if department:
         filters[DEPARTMENT_FIELD] = department
     elif exclude_departments:
-        filters[DEPARTMENT_FIELD] = ["in", ["", "Other", None]]
+        # "Consultation" has no dedicated bucket - it lands here in
+        # "Other Invoices" along with anything genuinely untagged.
+        filters[DEPARTMENT_FIELD] = ["in", ["", "Other", "Consultation", None]]
 
     invoices = frappe.get_all(
         "Sales Invoice",
@@ -238,7 +246,9 @@ def get_all_pending_payments():
 		filters={
 			"docstatus": 1,
 			"outstanding_amount": [">", 0],
-			DEPARTMENT_FIELD: ["in", ["", "Other", None]],
+			# "Consultation" has no dedicated bucket - it lands here
+			# along with anything genuinely untagged.
+			DEPARTMENT_FIELD: ["in", ["", "Other", "Consultation", None]],
 		},
 		fields=base_invoice_fields,
 		order_by="posting_date desc",

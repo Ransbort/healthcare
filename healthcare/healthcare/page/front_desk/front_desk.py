@@ -1,6 +1,10 @@
 import frappe
 from frappe import _
 from frappe.utils import now_datetime, nowdate, nowtime, add_to_date
+from healthcare.healthcare.utils import get_appointment_billing_item_and_rate
+from healthcare.healthcare.doctype.appointment_type.appointment_type import (
+	get_billing_details as get_appointment_type_billing_row,
+)
 
 
 # =============================================
@@ -15,6 +19,15 @@ def get_server_today():
 	timezone than the site, since encounter_date is always stamped with
 	server-side nowdate()."""
 	return nowdate()
+
+
+@frappe.whitelist()
+def get_default_appointment_type():
+	"""Healthcare Settings' configured default (e.g. "walk-in"), so the
+	Check-In form's Appointment Type field starts pre-filled instead of
+	blank, matching what's set under Healthcare Settings > Patient Portal
+	> Default Appointment Type."""
+	return frappe.db.get_single_value("Healthcare Settings", "default_appointment_type")
 
 # =============================================
 # NOTIFICATION HELPER
@@ -521,7 +534,12 @@ def get_pending_checkins(date=None, patient=None):
 	filters = {
 		"appointment_date": date,
 		"status": ["!=", "Cancelled"],
-		"checked_in_at": ["in", ["", None]],
+		# Frappe's "is"/"not set" operator, not ["in", ["", None]] - a
+		# plain IN/NOT IN list containing None triggers SQL's NULL
+		# three-valued-logic trap ("x IN (a, NULL)" never matches rows
+		# where x IS NULL, since "x = NULL" is never true - you need
+		# "IS NULL" specifically), so it silently matched nothing.
+		"checked_in_at": ["is", "not set"],
 	}
 	if patient:
 		filters["patient"] = patient
@@ -553,6 +571,68 @@ def _patient_and_practitioner_names(patient, practitioner):
 		frappe.db.get_value("Patient", patient, "patient_name"),
 		frappe.db.get_value("Healthcare Practitioner", practitioner, "practitioner_name"),
 	)
+
+
+@frappe.whitelist()
+def get_consultation_fee(appointment=None, practitioner=None, appointment_type=None, department=None):
+	_require_tab_access("checkin")
+	"""Look up the billable rate the same way the native make_encounter()/
+	invoice flow prices it (practitioner's OP Consulting Charge, falling
+	back to the appointment type's default), so front desk doesn't have
+	to guess/re-key it.
+
+	Pass `appointment` for an already-booked appointment being checked
+	in. For a walk-in still being drafted on the Check-In form - before
+	any Patient Appointment exists to look one up - pass whatever subset
+	of practitioner/appointment_type/department has been picked so far
+	instead.
+
+	Fails soft (0) rather than raising: this is a convenience auto-fill,
+	not a hard billing gate, and the walk-in form calls this on every
+	field change, so a still-incomplete selection (e.g. practitioner
+	picked but not yet appointment type) shouldn't pop a blocking
+	"missing configuration" dialog at staff mid-selection. Front desk can
+	always key the fee in by hand regardless."""
+
+	if appointment:
+		doc = frappe.get_doc("Patient Appointment", appointment)
+		appointment_type = doc.appointment_type
+		department = doc.department
+	else:
+		doc = frappe._dict({
+			"doctype": "Patient Appointment",
+			"practitioner": practitioner,
+			"appointment_type": appointment_type,
+			"department": department,
+			"service_unit": None,
+			"inpatient_record": None,
+		})
+
+	# Practitioner's own charge takes priority when there is one - same
+	# order native billing resolves in.
+	try:
+		billing_detail = get_appointment_billing_item_and_rate(doc)
+		if billing_detail.get("practitioner_charge"):
+			return {"consultation_fee": billing_detail.get("practitioner_charge")}
+	except Exception:
+		pass
+
+	# get_appointment_billing_item_and_rate() (via
+	# get_appointment_type_billing_details() in healthcare/utils.py)
+	# skips the Appointment Type's own Billing table entirely whenever
+	# no department/service unit is set - which is exactly the state a
+	# walk-in starts in before staff pick a department. Read Appointment
+	# Type's own get_billing_details() directly instead: it already
+	# knows how to match a department-specific row (e.g. "walk-in" +
+	# "General") and, if none matches, fall back to a department-less
+	# generic row - so a plain "walk-in -> ₵135" setup works whether or
+	# not a department has been chosen yet.
+	if appointment_type:
+		row = get_appointment_type_billing_row(appointment_type, department)
+		if row and row.get("op_consulting_charge"):
+			return {"consultation_fee": row.get("op_consulting_charge")}
+
+	return {"consultation_fee": 0}
 
 
 @frappe.whitelist()
@@ -632,6 +712,15 @@ def _finalize_checkin(appt, patient, consultation_fee):
 		})
 	else:
 		appt.db_set("queue_status", "Paid - Awaiting Vitals")
+		# No invoice means no "cashier" notify above - fire one here too
+		# so an already-open Queue tab still picks this arrival up live,
+		# same as the paid path does, instead of only showing up on the
+		# next manual tab switch/refresh.
+		_notify("queue_update", {
+			"department": "queue",
+			"message": f"{appt.name} checked in - no fee due",
+			"encounter": None,
+		})
 
 	return {
 		"status": "Success",
@@ -639,6 +728,38 @@ def _finalize_checkin(appt, patient, consultation_fee):
 		"invoice": invoice_name,
 		"queue_status": appt.queue_status,
 	}
+
+
+def _resolve_consultation_service_item(appointment_name):
+	"""Which Item actually goes on the consultation invoice line - prefer
+	whatever the native billing config resolves for this appointment
+	(practitioner's own OP Consulting Charge Item, then the appointment
+	type's, then Healthcare Settings' Out Patient Consulting Charge Item
+	default), same chain get_consultation_fee() prices against. Only
+	falls back to the "Consultation" placeholder item if none of that is
+	configured - invoice creation shouldn't hard-fail on a billing config
+	gap the way native flows do; check-in already collected/confirmed a
+	fee amount by this point regardless of whether an Item was found."""
+
+	appt = frappe.get_doc("Patient Appointment", appointment_name)
+
+	try:
+		billing_detail = get_appointment_billing_item_and_rate(appt)
+		if billing_detail.get("service_item"):
+			return billing_detail["service_item"]
+	except Exception:
+		pass
+
+	# Same department-gap workaround as get_consultation_fee() above -
+	# read Appointment Type's own Billing table directly, since the
+	# utils.py helper skips it entirely when the appointment has no
+	# department set.
+	if appt.appointment_type:
+		row = get_appointment_type_billing_row(appt.appointment_type, appt.department)
+		if row and row.get("op_consulting_charge_item"):
+			return row["op_consulting_charge_item"]
+
+	return "Consultation"
 
 
 def _create_consultation_invoice(patient, amount, appointment_name):
@@ -654,6 +775,11 @@ def _create_consultation_invoice(patient, amount, appointment_name):
 	unlabelled - Cashier Portal doesn't have a dedicated Consultation tab
 	today, but tagging it correctly here means one can be added later
 	without a data migration.
+
+	The invoice line's rate is whatever was actually confirmed/typed at
+	check-in (`amount`) - not re-derived here - since front desk may have
+	overridden the auto-filled suggestion; only the Item itself is looked
+	up fresh, via _resolve_consultation_service_item().
 	"""
 
 	patient_doc = frappe.get_doc("Patient", patient)
@@ -672,7 +798,7 @@ def _create_consultation_invoice(patient, amount, appointment_name):
 		"custom_department": "Consultation",
 
 		"items": [{
-			"item_code": "Consultation",
+			"item_code": _resolve_consultation_service_item(appointment_name),
 			"qty": 1,
 			"rate": float(amount),
 		}],
@@ -780,7 +906,10 @@ def get_queue(date=None, queue_status=None):
 
 	filters = {
 		"appointment_date": date,
-		"checked_in_at": ["not in", ["", None]],
+		# See get_pending_checkins() above for why this isn't
+		# ["not in", ["", None]] - that form silently matches zero rows
+		# ever, due to SQL's NULL three-valued-logic trap.
+		"checked_in_at": ["is", "set"],
 	}
 
 	if queue_status:
@@ -843,9 +972,6 @@ def get_queue(date=None, queue_status=None):
 				"bp",
 				"pulse",
 				"bmi",
-				"custom_spo2",
-				"custom_fbs",
-				"custom_rbs",
 				"vital_signs_note",
 			],
 			order_by="creation desc",
@@ -863,9 +989,6 @@ def get_queue(date=None, queue_status=None):
 			row["vitals_blood_pressure"] = v["bp"] if v else None
 			row["vitals_pulse"] = v["pulse"] if v else None
 			row["vitals_bmi"] = v["bmi"] if v else None
-			row["vitals_spo2"] = v["custom_spo2"] if v else None
-			row["vitals_fbs"] = v["custom_fbs"] if v else None
-			row["vitals_rbs"] = v["custom_rbs"] if v else None
 			row["vitals_notes"] = v["vital_signs_note"] if v else None
 
 	# patient_name stored on the Appointment can be stale/incomplete (e.g.
@@ -914,7 +1037,7 @@ def send_to_nurse(appointment):
 	_notify("queue_update", {
 		"department": "nurse",
 		"message": f"{patient_name} sent to nurse station",
-		"encounter": encounter,
+		"encounter": None,
 	})
 	return {"status": "Success"}
 
@@ -968,11 +1091,12 @@ def save_vitals(
 	temperature=None,
 	blood_pressure=None,
 	pulse=None,
+	respiratory_rate=None,
+	tongue=None,
+	abdomen=None,
+	reflexes=None,
 	weight=None,
 	height=None,
-	spo2=None,
-	fbs=None,
-	rbs=None,
 	notes=None
 ):
 	_require_tab_access("nurse")
@@ -998,6 +1122,10 @@ def save_vitals(
 
 		"temperature": temperature,
 		"pulse": pulse,
+		"respiratory_rate": respiratory_rate,
+		"tongue": tongue,
+		"abdomen": abdomen,
+		"reflexes": reflexes,
 		"bp_systolic": bp_systolic,
 		"bp_diastolic": bp_diastolic,
 		# bp_systolic/diastolic are the real stored values; "bp" is only a
@@ -1008,10 +1136,6 @@ def save_vitals(
 		"height": (float(height) / 100) if height else None,
 		"weight": weight,
 		"bmi": _calculate_bmi(weight, height),
-
-		"custom_spo2": spo2,
-		"custom_fbs": fbs,
-		"custom_rbs": rbs,
 
 		"vital_signs_note": notes,
 	})

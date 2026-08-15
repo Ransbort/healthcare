@@ -12,7 +12,7 @@
 			<Card class="p-5 rounded-xl shadow-sm">
 				<div class="flex justify-between items-center">
 					<div>
-						<h3 class="text-base font-semibold text-gray-800">Consultation Fee</h3>
+						<h3 class="text-base font-semibold text-gray-800">Fee</h3>
 						<p class="py-2 text-sm text-gray-500">Consultation with {{ practitioner }}</p>
 					</div>
 					<div class="text-lg font-bold text-green-600">

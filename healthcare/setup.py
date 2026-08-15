@@ -2226,43 +2226,6 @@ def get_custom_fields():
 				"hidden": 0,
 			},
 		],
-		# Front Desk / Nurse Station: the standard Healthcare "Vital Signs"
-		# doctype covers temperature/pulse/bp_systolic/bp_diastolic/height/
-		# weight/bmi/vital_signs_note out of the box, but has no fields for
-		# SpO2, FBS (Fasting Blood Sugar), or RBS (Random Blood Sugar).
-		# front_desk.py's save_vitals() sets these three directly on the
-		# Vital Signs doc it creates for each nurse-station recording.
-		"Vital Signs": [
-			{
-				"fieldname": "custom_spo2",
-				"label": "SpO2 (%)",
-				"fieldtype": "Int",
-				"insert_after": "bp",
-				"non_negative": 1,
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "custom_fbs",
-				"label": "FBS (mg/dL)",
-				"fieldtype": "Float",
-				"insert_after": "custom_spo2",
-				"non_negative": 1,
-				"description": "Fasting Blood Sugar.",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "custom_rbs",
-				"label": "RBS (mg/dL)",
-				"fieldtype": "Float",
-				"insert_after": "custom_fbs",
-				"non_negative": 1,
-				"description": "Random Blood Sugar.",
-				"reqd": 0,
-				"hidden": 0,
-			},
-		],
 		# Pharmacy POS: lets any Item in the "Pharmacy" item_group appear on
 		# the Pharmacy POS grid with the same rich display as a
 		# prescription-linked Medication, even when no Medication /
