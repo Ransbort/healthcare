@@ -7,6 +7,31 @@ from healthcare.healthcare.doctype.appointment_type.appointment_type import (
 )
 
 
+def _get_billing_detail_or_none(doc):
+	"""get_appointment_billing_item_and_rate() calls frappe.throw() when a
+	practitioner has no OP Consulting Charge configured and there's no
+	Appointment Type fallback either - fine for the native "Show Payment
+	Prompt in Appointment" flow it was written for, where that's meant to
+	be a hard stop, but front desk only ever wants this as a
+	best-effort price lookup (both call sites below already have their
+	own fallback/backoff for exactly this "not configured yet" case).
+
+	Catching the exception alone isn't enough to suppress it though:
+	frappe.throw() queues its message via frappe.msgprint(raise_exception=
+	True), which appends to frappe.local.message_log *before* raising -
+	so even a caught exception leaves that message sitting in the log,
+	and Frappe still serializes it into the response's _server_messages
+	and pops the "Missing Configuration" dialog on the client regardless
+	of whether the request otherwise succeeded. Trimming the log back to
+	its pre-call length is what actually swallows it end to end."""
+	log_len = len(frappe.local.message_log)
+	try:
+		return get_appointment_billing_item_and_rate(doc)
+	except Exception:
+		del frappe.local.message_log[log_len:]
+		return None
+
+
 # =============================================
 # GET SERVER TODAY
 # =============================================
@@ -610,12 +635,9 @@ def get_consultation_fee(appointment=None, practitioner=None, appointment_type=N
 
 	# Practitioner's own charge takes priority when there is one - same
 	# order native billing resolves in.
-	try:
-		billing_detail = get_appointment_billing_item_and_rate(doc)
-		if billing_detail.get("practitioner_charge"):
-			return {"consultation_fee": billing_detail.get("practitioner_charge")}
-	except Exception:
-		pass
+	billing_detail = _get_billing_detail_or_none(doc)
+	if billing_detail and billing_detail.get("practitioner_charge"):
+		return {"consultation_fee": billing_detail.get("practitioner_charge")}
 
 	# get_appointment_billing_item_and_rate() (via
 	# get_appointment_type_billing_details() in healthcare/utils.py)
@@ -757,12 +779,9 @@ def _resolve_consultation_service_item(appointment_name):
 
 	appt = frappe.get_doc("Patient Appointment", appointment_name)
 
-	try:
-		billing_detail = get_appointment_billing_item_and_rate(appt)
-		if billing_detail.get("service_item"):
-			return billing_detail["service_item"]
-	except Exception:
-		pass
+	billing_detail = _get_billing_detail_or_none(appt)
+	if billing_detail and billing_detail.get("service_item"):
+		return billing_detail["service_item"]
 
 	# Same department-gap workaround as get_consultation_fee() above -
 	# read Appointment Type's own Billing table directly, since the

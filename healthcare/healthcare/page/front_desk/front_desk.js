@@ -551,8 +551,25 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 					ci_department.set_value(doc.department || '');
 					ci_appointment_type.set_value(doc.appointment_type || '');
 					ci_date.set_value(doc.appointment_date || '');
-					ci_time.set_value(doc.appointment_time || '');
+					// Some existing records have appointment_time stored with
+					// fractional seconds (e.g. "18:45:20.421621") - the Time
+					// control validates strictly against HH:mm:ss and throws
+					// "must be in format" if handed that raw, so strip
+					// anything after a "." before passing it along.
+					ci_time.set_value((doc.appointment_time || '').split('.')[0]);
 					setAppointmentFieldsReadOnly(true);
+
+					// The appointment already names its patient — no reason
+					// to make staff look them up again by hand. Force the
+					// Patient panel back to "Existing Patient" mode too, in
+					// case "New Patient" was left active from a previous
+					// walk-in.
+					checkinMode = 'existing';
+					page.main.find('.toggle-btn').removeClass('active');
+					page.main.find('.toggle-btn[data-mode="existing"]').addClass('active');
+					page.main.find('#existing-patient-block').show();
+					page.main.find('#new-patient-block').hide();
+					ci_patient.set_value(doc.patient || '');
 				});
 
 				// Pull the billable rate the same way the native
@@ -613,7 +630,29 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		parent: page.main.find('[data-fieldname="ci_practitioner"]'),
 		df: {
 			fieldtype: 'Link', fieldname: 'ci_practitioner', options: 'Healthcare Practitioner', label: 'Practitioner',
-			onchange: refreshWalkinFee
+			onchange: function() {
+				refreshWalkinFee();
+
+				// Walk-in path only — picking an existing appointment
+				// already sets department from the appointment itself
+				// (see ci_appointment's onchange above); auto-filling here
+				// too would just race/override that with a possibly
+				// different value.
+				if (ci_appointment.get_value()) return;
+
+				const practitioner = ci_practitioner.get_value();
+				if (!practitioner) return;
+
+				// Convenience auto-fill: default the department to
+				// whatever this practitioner is configured under, saving
+				// a manual pick on every walk-in. Not a lock — staff can
+				// still change it by hand afterward.
+				frappe.db.get_value('Healthcare Practitioner', practitioner, 'department').then(function(r) {
+					if (r.message && r.message.department) {
+						ci_department.set_value(r.message.department);
+					}
+				});
+			}
 		},
 		render_input: true
 	});
@@ -1115,7 +1154,9 @@ function loadQueue() {
 					<td>${row.encounter_time || ''}</td>
 					<td>${row.patient_name || ''}</td>
 					<td>${row.practitioner_name || row.practitioner || ''}</td>
-					<td><button class="btn btn-xs btn-primary btn-open-vitals" data-name="${row.name}">${__('Record Vitals')}</button></td>
+					<td>
+						<button class="btn btn-xs btn-primary btn-open-vitals" data-name="${row.name}">${__('Record Vitals')}</button>
+					</td>
 				</tr>
 			`;
 		});
