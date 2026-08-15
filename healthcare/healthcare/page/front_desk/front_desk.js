@@ -1117,117 +1117,115 @@ function loadQueue() {
 					<td>${row.practitioner_name || row.practitioner || ''}</td>
 					<td><button class="btn btn-xs btn-primary btn-open-vitals" data-name="${row.name}">${__('Record Vitals')}</button></td>
 				</tr>
-				<tr class="vitals-row" data-vitals-for="${row.name}"><td colspan="4">
-					<div class="vitals-form" id="vitals-form-${row.name}">
-						<div class="form-grid">
-							<div data-vf="temp-${row.name}"></div>
-							<div data-vf="bp-${row.name}"></div>
-							<div data-vf="pulse-${row.name}"></div>
-						</div>
-						<div class="form-grid">
-							<div data-vf="weight-${row.name}"></div>
-							<div data-vf="height-${row.name}"></div>
-							<div data-vf="bmi-${row.name}"></div>
-						</div>
-						<div class="form-grid">
-							<div data-vf="resp-${row.name}"></div>
-							<div data-vf="tongue-${row.name}"></div>
-							<div data-vf="abdomen-${row.name}"></div>
-						</div>
-						<div class="form-grid-2">
-							<div data-vf="reflexes-${row.name}"></div>
-							<div data-vf="notes-${row.name}"></div>
-						</div>
-						<button class="btn btn-success btn-sm btn-save-vitals" data-name="${row.name}">
-							<i class="fa fa-check"></i> ${__('Save Vitals &amp; Send to Doctor')}
-						</button>
-					</div>
-				</td></tr>
 			`;
 		});
 		container.html(`<table class="queue-table"><tbody>${body}</tbody></table>`);
 
 		container.find('.btn-open-vitals').on('click', function() {
 			const name = $(this).data('name');
-			const formEl = container.find(`#vitals-form-${name}`);
-			if (formEl.hasClass('open')) { formEl.removeClass('open'); return; }
-			formEl.addClass('open');
-			if (formEl.data('built')) return;
-			formEl.data('built', true);
-
-			const temp = frappe.ui.form.make_control({ parent: container.find(`[data-vf="temp-${name}"]`), df: { fieldtype: 'Float', fieldname: 'temp', label: 'Temperature (°C)' }, render_input: true });
-			temp.refresh();
-			const bp = frappe.ui.form.make_control({ parent: container.find(`[data-vf="bp-${name}"]`), df: { fieldtype: 'Data', fieldname: 'bp', label: 'Blood Pressure', placeholder: '120/80' }, render_input: true });
-			bp.refresh();
-			const pulse = frappe.ui.form.make_control({ parent: container.find(`[data-vf="pulse-${name}"]`), df: { fieldtype: 'Int', fieldname: 'pulse', label: 'Pulse (bpm)' }, render_input: true });
-			pulse.refresh();
-			const weight = frappe.ui.form.make_control({ parent: container.find(`[data-vf="weight-${name}"]`), df: { fieldtype: 'Float', fieldname: 'weight', label: 'Weight (kg)' }, render_input: true });
-			weight.refresh();
-			const height = frappe.ui.form.make_control({ parent: container.find(`[data-vf="height-${name}"]`), df: { fieldtype: 'Float', fieldname: 'height', label: 'Height (cm)' }, render_input: true });
-			height.refresh();
-			// Read-only: this is a live client-side preview only, purely so
-			// the nurse can see it while entering weight/height. The value
-			// actually saved is always recomputed server-side in
-			// save_vitals() -> _calculate_bmi(), never trusted from here.
-			const bmi = frappe.ui.form.make_control({ parent: container.find(`[data-vf="bmi-${name}"]`), df: { fieldtype: 'Float', fieldname: 'bmi', label: 'BMI', precision: 2, read_only: 1, description: __('Auto-calculated from weight & height') }, render_input: true });
-			bmi.refresh();
-			const resp = frappe.ui.form.make_control({ parent: container.find(`[data-vf="resp-${name}"]`), df: { fieldtype: 'Data', fieldname: 'resp', label: 'Respiratory Rate' }, render_input: true });
-			resp.refresh();
-			const tongue = frappe.ui.form.make_control({ parent: container.find(`[data-vf="tongue-${name}"]`), df: { fieldtype: 'Select', fieldname: 'tongue', label: 'Tongue', options: '\nCoated\nVery Coated\nNormal\nFurry\nCuts' }, render_input: true });
-			tongue.refresh();
-			const abdomen = frappe.ui.form.make_control({ parent: container.find(`[data-vf="abdomen-${name}"]`), df: { fieldtype: 'Select', fieldname: 'abdomen', label: 'Abdomen', options: '\nNormal\nBloated\nFull\nFluid\nConstipated' }, render_input: true });
-			abdomen.refresh();
-			const reflexes = frappe.ui.form.make_control({ parent: container.find(`[data-vf="reflexes-${name}"]`), df: { fieldtype: 'Select', fieldname: 'reflexes', label: 'Reflexes', options: '\nNormal\nHyper\nVery Hyper\nOne Sided' }, render_input: true });
-			reflexes.refresh();
-			const notes = frappe.ui.form.make_control({ parent: container.find(`[data-vf="notes-${name}"]`), df: { fieldtype: 'Data', fieldname: 'notes', label: 'Notes' }, render_input: true });
-			notes.refresh();
-
-			function recalcBmiPreview() {
-				const w = parseFloat(weight.get_value());
-				const h = parseFloat(height.get_value());
-				if (w > 0 && h > 0) {
-					const heightM = h / 100;
-					bmi.set_value(Math.round((w / (heightM * heightM)) * 100) / 100);
-				} else {
-					bmi.set_value('');
-				}
-			}
-			if (weight.$input) weight.$input.on('change input', recalcBmiPreview);
-			if (height.$input) height.$input.on('change input', recalcBmiPreview);
-
-			formEl.data('controls', { temp, bp, pulse, weight, height, bmi, resp, tongue, abdomen, reflexes, notes });
+			openVitalsDialog(name);
 		});
 
-		container.find('.btn-save-vitals').on('click', function() {
-			const name = $(this).data('name');
-			const formEl = container.find(`#vitals-form-${name}`);
-			const c = formEl.data('controls');
-			if (!c) return;
-			frappe.call({
-				method: 'healthcare.healthcare.page.front_desk.front_desk.save_vitals',
-				args: {
-					appointment: name,
-					temperature: c.temp.get_value(),
-					blood_pressure: c.bp.get_value(),
-					pulse: c.pulse.get_value(),
-					weight: c.weight.get_value(),
-					height: c.height.get_value(),
-					respiratory_rate: c.resp.get_value(),
-					tongue: c.tongue.get_value(),
-					abdomen: c.abdomen.get_value(),
-					reflexes: c.reflexes.get_value(),
-					notes: c.notes.get_value()
-				},
-				freeze: true,
-				freeze_message: __('Saving vitals...'),
-				callback: function(r) {
-					if (r.message && r.message.status === 'Success') {
-						frappe.show_alert({ message: __('Vitals saved, sent to doctor'), indicator: 'green' }, 5);
-						loadNurseQueue();
-					}
+		function openVitalsDialog(name) {
+			const dialog = new frappe.ui.Dialog({
+				title: __('Record Vitals'),
+				size: 'large',
+				fields: [
+					{ fieldtype: 'Section Break', label: __('Vitals') },
+					{ fieldtype: 'Float', fieldname: 'temp', label: __('Temperature (°C)') },
+					{ fieldtype: 'Column Break' },
+					{ fieldtype: 'Data', fieldname: 'bp', label: __('Blood Pressure'), placeholder: '120/80' },
+					{ fieldtype: 'Column Break' },
+					{ fieldtype: 'Int', fieldname: 'pulse', label: __('Pulse (bpm)') },
+
+					{ fieldtype: 'Section Break' },
+					{ fieldtype: 'Float', fieldname: 'weight', label: __('Weight (kg)') },
+					{ fieldtype: 'Column Break' },
+					{ fieldtype: 'Float', fieldname: 'height', label: __('Height (cm)') },
+					{ fieldtype: 'Column Break' },
+					// Read-only: this is a live client-side preview only, purely
+					// so the nurse can see it while entering weight/height. The
+					// value actually saved is always recomputed server-side in
+					// save_vitals() -> _calculate_bmi(), never trusted from here.
+					{ fieldtype: 'Float', fieldname: 'bmi', label: __('BMI'), precision: 2, read_only: 1, description: __('Auto-calculated from weight & height') },
+
+					{ fieldtype: 'Section Break' },
+					{ fieldtype: 'Data', fieldname: 'resp', label: __('Respiratory Rate') },
+					{ fieldtype: 'Column Break' },
+					{ fieldtype: 'Select', fieldname: 'tongue', label: __('Tongue'), options: '\nCoated\nVery Coated\nNormal\nFurry\nCuts' },
+					{ fieldtype: 'Column Break' },
+					{ fieldtype: 'Select', fieldname: 'abdomen', label: __('Abdomen'), options: '\nNormal\nBloated\nFull\nFluid\nConstipated' },
+
+					{ fieldtype: 'Section Break' },
+					{ fieldtype: 'Int', fieldname: 'spo2', label: __('SpO2 (%)') },
+					{ fieldtype: 'Column Break' },
+					{ fieldtype: 'Float', fieldname: 'fbs', label: __('FBS (mg/dL)'), description: __('Fasting Blood Sugar') },
+					{ fieldtype: 'Column Break' },
+					{ fieldtype: 'Float', fieldname: 'rbs', label: __('RBS (mg/dL)'), description: __('Random Blood Sugar') },
+
+					{ fieldtype: 'Section Break' },
+					{ fieldtype: 'Select', fieldname: 'reflexes', label: __('Reflexes'), options: '\nNormal\nHyper\nVery Hyper\nOne Sided' },
+					{ fieldtype: 'Column Break' },
+					// Display-only - the actual value saved is always the
+					// signed-in user, stamped server-side in save_vitals()
+					// from frappe.session.user. Never trust/send this from
+					// the client - it's shown here purely so the nurse can
+					// see who they're recording as.
+					{ fieldtype: 'Data', fieldname: 'recorded_by_display', label: __('Vitals Recorded By'), read_only: 1, default: frappe.session.user_fullname || frappe.session.user },
+
+					{ fieldtype: 'Section Break' },
+					{ fieldtype: 'Small Text', fieldname: 'notes', label: __('Notes') },
+				],
+				primary_action_label: __('Save Vitals & Send to Doctor'),
+				primary_action: function(values) {
+					frappe.call({
+						method: 'healthcare.healthcare.page.front_desk.front_desk.save_vitals',
+						args: {
+							appointment: name,
+							temperature: values.temp,
+							blood_pressure: values.bp,
+							pulse: values.pulse,
+							weight: values.weight,
+							height: values.height,
+							respiratory_rate: values.resp,
+							tongue: values.tongue,
+							abdomen: values.abdomen,
+							reflexes: values.reflexes,
+							spo2: values.spo2,
+							fbs: values.fbs,
+							rbs: values.rbs,
+							notes: values.notes
+						},
+						freeze: true,
+						freeze_message: __('Saving vitals...'),
+						callback: function(r) {
+							if (r.message && r.message.status === 'Success') {
+								dialog.hide();
+								frappe.show_alert({ message: __('Vitals saved, sent to doctor'), indicator: 'green' }, 5);
+								loadNurseQueue();
+							}
+						}
+					});
 				}
 			});
-		});
+
+			function recalcBmiPreview() {
+				const w = parseFloat(dialog.get_value('weight'));
+				const h = parseFloat(dialog.get_value('height'));
+				if (w > 0 && h > 0) {
+					const heightM = h / 100;
+					dialog.set_value('bmi', Math.round((w / (heightM * heightM)) * 100) / 100);
+				} else {
+					dialog.set_value('bmi', '');
+				}
+			}
+			const weightField = dialog.fields_dict.weight;
+			const heightField = dialog.fields_dict.height;
+			if (weightField && weightField.$input) weightField.$input.on('change input', recalcBmiPreview);
+			if (heightField && heightField.$input) heightField.$input.on('change input', recalcBmiPreview);
+
+			dialog.show();
+		}
 	}
 
 	// =============================================
@@ -1263,7 +1261,10 @@ function loadQueue() {
 				row.vitals_temperature ? `${row.vitals_temperature}°C` : null,
 				row.vitals_blood_pressure || null,
 				row.vitals_pulse ? `${row.vitals_pulse} bpm` : null,
-				row.vitals_bmi ? `BMI ${row.vitals_bmi}` : null
+				row.vitals_bmi ? `BMI ${row.vitals_bmi}` : null,
+				row.vitals_spo2 ? `SpO2 ${row.vitals_spo2}%` : null,
+				row.vitals_fbs ? `FBS ${row.vitals_fbs}` : null,
+				row.vitals_rbs ? `RBS ${row.vitals_rbs}` : null
 			].filter(Boolean).join(' · ') || __('No vitals recorded');
 			body += `
 				<tr>
@@ -1288,9 +1289,25 @@ function loadQueue() {
 				args: { appointment: name },
 				callback: function(r) {
 					if (r.message && r.message.status === 'Success') {
+						const encounterName = r.message.encounter;
 						// Creates the Patient Encounter (if one doesn't already
 						// exist for this appointment) and opens it.
-						frappe.set_route('Form', 'Patient Encounter', r.message.encounter);
+						//
+						// Two SPA-navigation attempts here (loading the
+						// doctype's metadata via frappe.model.with_doctype()
+						// first, then separately trying set_route().then()
+						// + clear_doc()/reload_doc()) both still left the
+						// page half-rendered until a manual refresh - the
+						// generic footer (Comments/Activity) shows, but the
+						// doctype's own field layout/dashboard doesn't.
+						// Both rely on set_route()'s returned promise lining
+						// up with cur_frm actually pointing at the new doc
+						// by the time it resolves, and that assumption isn't
+						// holding here. A real browser navigation sidesteps
+						// the whole SPA route/render pipeline - it's the
+						// exact same code path a manual refresh takes, so
+						// there's no internal timing to get wrong.
+						window.location.href = frappe.utils.get_form_link('Patient Encounter', encounterName);
 					}
 				}
 			});

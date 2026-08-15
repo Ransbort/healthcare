@@ -2113,115 +2113,54 @@ def get_custom_fields():
 				"reqd": 0,
 				"hidden": 0,
 			},
+		],
+		# Front Desk / Nurse Station: the standard Healthcare "Vital Signs"
+		# doctype covers temperature/pulse/respiratory_rate/tongue/abdomen/
+		# reflexes/bp_systolic/bp_diastolic/height/weight/bmi/
+		# vital_signs_note out of the box, but has no fields for SpO2, FBS
+		# (Fasting Blood Sugar), RBS (Random Blood Sugar), or who recorded
+		# the reading.
+		# front_desk.py's save_vitals() sets these directly on the Vital
+		# Signs doc it creates for each nurse-station recording -
+		# custom_vitals_recorded_by is always frappe.session.user, stamped
+		# server-side, never taken from the client.
+		"Vital Signs": [
 			{
-				"fieldname": "vitals_column_break",
-				"label": "",
-				"fieldtype": "Column Break",
-				"insert_after": "checked_in_at",
-			},
-			{
-				"fieldname": "vitals_temperature",
-				"label": "Temperature (\u00b0C)",
-				"fieldtype": "Float",
-				"insert_after": "vitals_column_break",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_blood_pressure",
-				"label": "Blood Pressure",
-				"fieldtype": "Data",
-				"insert_after": "vitals_temperature",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_pulse",
-				"label": "Pulse (bpm)",
+				"fieldname": "custom_spo2",
+				"label": "SpO2 (%)",
 				"fieldtype": "Int",
-				"insert_after": "vitals_blood_pressure",
+				"insert_after": "bp",
+				"non_negative": 1,
 				"reqd": 0,
 				"hidden": 0,
 			},
 			{
-				"fieldname": "vitals_weight",
-				"label": "Weight (kg)",
+				"fieldname": "custom_fbs",
+				"label": "FBS (mg/dL)",
 				"fieldtype": "Float",
-				"insert_after": "vitals_pulse",
+				"insert_after": "custom_spo2",
+				"non_negative": 1,
+				"description": "Fasting Blood Sugar.",
 				"reqd": 0,
 				"hidden": 0,
 			},
 			{
-				"fieldname": "vitals_height",
-				"label": "Height (cm)",
+				"fieldname": "custom_rbs",
+				"label": "RBS (mg/dL)",
 				"fieldtype": "Float",
-				"insert_after": "vitals_weight",
+				"insert_after": "custom_fbs",
+				"non_negative": 1,
+				"description": "Random Blood Sugar.",
 				"reqd": 0,
 				"hidden": 0,
 			},
 			{
-				"fieldname": "vitals_notes",
-				"label": "Nurse Notes",
-				"fieldtype": "Small Text",
-				"insert_after": "vitals_height",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_recorded_by",
+				"fieldname": "custom_vitals_recorded_by",
 				"label": "Vitals Recorded By",
 				"fieldtype": "Link",
-				"insert_after": "vitals_notes",
 				"options": "User",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "vitals_recorded_on",
-				"label": "Vitals Recorded On",
-				"fieldtype": "Datetime",
-				"insert_after": "vitals_recorded_by",
-				"reqd": 0,
-				"hidden": 0,
-			},
-		],
-		# Front Desk: post-refactor, queue state lives on Patient Encounter
-		# itself (not Patient Appointment) — see front_desk.py's
-		# check_in_appointment()/get_queue()/send_to_nurse()/save_vitals()/
-		# start_consultation()/on_patient_encounter_submit(), all of which
-		# read/write these fields directly on Patient Encounter.
-		"Patient Encounter": [
-			{
-				"fieldname": "queue_status",
-				"label": "Queue Status",
-				"fieldtype": "Select",
-				"insert_after": "encounter_time",
-				"options": "Registered\nPayment Pending\nPaid - Awaiting Vitals\nWith Nurse\nWith Doctor\nIn Consultation\nCompleted\nCancelled",
-				"default": "Registered",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "front_desk_section",
-				"label": "Front Desk / Nurse Station",
-				"fieldtype": "Section Break",
-				"insert_after": "queue_status",
-				"collapsible": 1,
-			},
-			{
-				"fieldname": "consultation_invoice",
-				"label": "Consultation Invoice",
-				"fieldtype": "Link",
-				"insert_after": "front_desk_section",
-				"options": "Sales Invoice",
-				"reqd": 0,
-				"hidden": 0,
-			},
-			{
-				"fieldname": "checked_in_at",
-				"label": "Checked In At",
-				"fieldtype": "Datetime",
-				"insert_after": "consultation_invoice",
+				"insert_after": "custom_rbs",
+				"read_only": 1,
 				"reqd": 0,
 				"hidden": 0,
 			},
@@ -2292,18 +2231,6 @@ def get_custom_fields():
 		# walk-in/OTC branch pulls from, instead of hardcoding "Pharmacy".
 		# Read by pharmacy.py's get_pos_medications()/get_pharmacy_settings()
 		# and written by set_pharmacy_item_group().
-		# "Healthcare Settings": [
-		# 	{
-		# 		"fieldname": "pharmacy_item_group",
-		# 		"label": "Pharmacy Item Group",
-		# 		"fieldtype": "Link",
-		# 		"options": "Item Group",
-		# 		"insert_after": "allow_oversell_medication",
-		# 		"description": "Item Group shown in Pharmacy POS for walk-in/OTC items.",
-		# 		"reqd": 0,
-		# 		"hidden": 0,
-		# 	},
-		# ],
 		"Healthcare Settings": [
 			{
 				"fieldname": "pharmacy_item_group",

@@ -746,39 +746,6 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
                 </div>
             </div>
 
-            <!-- All Pending Payments Section -->
-            <div class="pending-payments-section" id="pending-payments-section" style="display: none;">
-                <div class="patient-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                        <h5 style="margin: 0;"><i class="fa fa-clock-o"></i> All Pending Payments</h5>
-                        <button class="btn btn-default btn-sm" id="pending-refresh-btn">
-                            <i class="fa fa-refresh"></i> Refresh
-                        </button>
-                    </div>
-                    <div class="tab-navigation">
-                        <button class="tab-button active" data-pending-tab="other">
-                            <i class="fa fa-file-text"></i> Other
-                            <span class="badge badge-warning" id="pending-other-count">0</span>
-                        </button>
-                        <button class="tab-button" data-pending-tab="pharmacy">
-                            <i class="fa fa-medkit"></i> Pharmacy
-                            <span class="badge badge-info" id="pending-pharmacy-count">0</span>
-                        </button>
-                        <button class="tab-button" data-pending-tab="laboratory">
-                            <i class="fa fa-flask"></i> Laboratory
-                            <span class="badge badge-info" id="pending-laboratory-count">0</span>
-                        </button>
-                        <button class="tab-button" data-pending-tab="rehabilitation">
-                            <i class="fa fa-heartbeat"></i> Rehabilitation
-                            <span class="badge badge-info" id="pending-rehabilitation-count">0</span>
-                        </button>
-                    </div>
-                </div>
-                <div class="tab-content active" id="pending-other-tab"><div id="pending-other-container"></div></div>
-                <div class="tab-content" id="pending-pharmacy-tab"><div id="pending-pharmacy-container"></div></div>
-                <div class="tab-content" id="pending-laboratory-tab"><div id="pending-laboratory-container"></div></div>
-                <div class="tab-content" id="pending-rehabilitation-tab"><div id="pending-rehabilitation-container"></div></div>
-            </div>
         </div>
     `;
 
@@ -811,21 +778,7 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
 
     // All Pending Payments button handler
     page.main.find('#all-pending-btn').on('click', function() {
-        toggleAllPendingPaymentsSection();
-    });
-
-    // Tab switching within the All Pending Payments section
-    page.main.find('.tab-button[data-pending-tab]').on('click', function() {
-        const tab = $(this).data('pending-tab');
-        page.main.find('#pending-payments-section .tab-button').removeClass('active');
-        $(this).addClass('active');
-        page.main.find('#pending-payments-section .tab-content').removeClass('active');
-        page.main.find(`#pending-${tab}-tab`).addClass('active');
-    });
-
-    // Refresh button inside the All Pending Payments section
-    page.main.find('#pending-refresh-btn').on('click', function() {
-        loadAllPendingPayments();
+        showAllPendingPaymentsDialog();
     });
 
     // Create search type field
@@ -1975,36 +1928,86 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
         });
     }
 
-    // Toggle the inline All Pending Payments section
-    function toggleAllPendingPaymentsSection() {
-        const section = page.main.find('#pending-payments-section');
-        if (section.is(':visible')) {
-            section.hide();
-        } else {
-            section.show();
-            loadAllPendingPayments();
-        }
+    // All Pending Payments, as a popup dialog rather than an inline
+    // section - built the same way showDailyTransactionsDialog() below
+    // is: HTML fieldtype fields inside a frappe.ui.Dialog carrying the
+    // same tab-navigation/tab-content markup (and CSS classes) the
+    // inline section used to, so it looks identical - just in a modal.
+    function showAllPendingPaymentsDialog() {
+        const dialog = new frappe.ui.Dialog({
+            title: __('All Pending Payments'),
+            size: 'extra-large',
+            fields: [
+                {
+                    fieldtype: 'HTML',
+                    fieldname: 'pending_payments_html',
+                    options: `
+                        <div class="tab-navigation">
+                            <button class="tab-button active" data-pending-tab="other">
+                                <i class="fa fa-file-text"></i> Other
+                                <span class="badge badge-warning" id="pending-other-count">0</span>
+                            </button>
+                            <button class="tab-button" data-pending-tab="pharmacy">
+                                <i class="fa fa-medkit"></i> Pharmacy
+                                <span class="badge badge-info" id="pending-pharmacy-count">0</span>
+                            </button>
+                            <button class="tab-button" data-pending-tab="laboratory">
+                                <i class="fa fa-flask"></i> Laboratory
+                                <span class="badge badge-info" id="pending-laboratory-count">0</span>
+                            </button>
+                            <button class="tab-button" data-pending-tab="rehabilitation">
+                                <i class="fa fa-heartbeat"></i> Rehabilitation
+                                <span class="badge badge-info" id="pending-rehabilitation-count">0</span>
+                            </button>
+                        </div>
+                        <div class="tab-content active" id="pending-other-tab"><div id="pending-other-container"></div></div>
+                        <div class="tab-content" id="pending-pharmacy-tab"><div id="pending-pharmacy-container"></div></div>
+                        <div class="tab-content" id="pending-laboratory-tab"><div id="pending-laboratory-container"></div></div>
+                        <div class="tab-content" id="pending-rehabilitation-tab"><div id="pending-rehabilitation-container"></div></div>
+                    `
+                }
+            ],
+            primary_action_label: __('Refresh'),
+            primary_action: function() {
+                loadAllPendingPayments(dialog);
+            }
+        });
+
+        dialog.show();
+
+        // Tab switching, scoped to this dialog instance rather than the
+        // page - so multiple dialogs (or the underlying page) never
+        // fight over the same click handler.
+        dialog.$wrapper.find('.tab-button[data-pending-tab]').on('click', function() {
+            const tab = $(this).data('pending-tab');
+            dialog.$wrapper.find('.tab-button[data-pending-tab]').removeClass('active');
+            $(this).addClass('active');
+            dialog.$wrapper.find('.tab-content').removeClass('active');
+            dialog.$wrapper.find(`#pending-${tab}-tab`).addClass('active');
+        });
+
+        loadAllPendingPayments(dialog);
     }
 
-    function loadAllPendingPayments() {
+    function loadAllPendingPayments(dialog) {
         frappe.call({
             method: 'healthcare.healthcare.page.cashier_portal.cashier_portal.get_all_pending_payments',
             freeze: true,
             freeze_message: __('Loading pending payments...'),
             callback: function(r) {
                 if (!r.message) return;
-                renderPendingBucket('other', r.message.other_invoices, 'invoice');
-                renderPendingBucket('laboratory', r.message.laboratory_invoices, 'invoice');
-                renderPendingBucket('rehabilitation', r.message.rehabilitation_invoices, 'invoice');
-                renderPendingBucket('pharmacy', r.message.pharmacy_orders, 'pharmacy_order');
+                renderPendingBucket(dialog, 'other', r.message.other_invoices, 'invoice');
+                renderPendingBucket(dialog, 'laboratory', r.message.laboratory_invoices, 'invoice');
+                renderPendingBucket(dialog, 'rehabilitation', r.message.rehabilitation_invoices, 'invoice');
+                renderPendingBucket(dialog, 'pharmacy', r.message.pharmacy_orders, 'pharmacy_order');
             }
         });
     }
 
-    function renderPendingBucket(bucketName, rows, docType) {
-        const container = page.main.find(`#pending-${bucketName}-container`);
+    function renderPendingBucket(dialog, bucketName, rows, docType) {
+        const container = dialog.$wrapper.find(`#pending-${bucketName}-container`);
         container.empty();
-        page.main.find(`#pending-${bucketName}-count`).text(rows.length);
+        dialog.$wrapper.find(`#pending-${bucketName}-count`).text(rows.length);
 
         if (rows.length === 0) {
             container.html(`
@@ -2056,7 +2059,7 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
 
             card.find('.btn-pay').on('click', function() {
                 showPaymentDialog(row, docType, page, entityName, function() {
-                    loadAllPendingPayments();
+                    loadAllPendingPayments(dialog);
                 });
             });
 

@@ -683,6 +683,20 @@ def create_walkin_checkin(patient, practitioner, appointment_type, department=No
 		"appointment_end_datetime": appointment_end_datetime,
 		"duration": duration,
 		"status": "Open",
+		# A walk-in arrives whenever they arrive - it's not a real booked
+		# slot, so it has no business colliding with the practitioner's
+		# actual schedule. patient_appointment.py's validate_overlaps()
+		# only runs its broad practitioner/patient time-range overlap
+		# check when this is falsy; when true it instead only guards
+		# against the same patient double-booking the exact same
+		# date/time/appointment_for, which is what a walk-in actually
+		# needs. Native Healthcare already uses this exact flag for its
+		# own "book on check-in" flow (see validate_based_on_appointments_for()
+		# a few lines below in the same file) - without it, any walk-in
+		# whose arrival time happens to fall inside another one of the
+		# practitioner's scheduled appointments gets rejected with
+		# "Not allowed, cannot overlap appointment ...".
+		"appointment_based_on_check_in": 1,
 	})
 	appt.insert(ignore_permissions=True)
 
@@ -972,6 +986,9 @@ def get_queue(date=None, queue_status=None):
 				"bp",
 				"pulse",
 				"bmi",
+				"custom_spo2",
+				"custom_fbs",
+				"custom_rbs",
 				"vital_signs_note",
 			],
 			order_by="creation desc",
@@ -989,6 +1006,9 @@ def get_queue(date=None, queue_status=None):
 			row["vitals_blood_pressure"] = v["bp"] if v else None
 			row["vitals_pulse"] = v["pulse"] if v else None
 			row["vitals_bmi"] = v["bmi"] if v else None
+			row["vitals_spo2"] = v["custom_spo2"] if v else None
+			row["vitals_fbs"] = v["custom_fbs"] if v else None
+			row["vitals_rbs"] = v["custom_rbs"] if v else None
 			row["vitals_notes"] = v["vital_signs_note"] if v else None
 
 	# patient_name stored on the Appointment can be stale/incomplete (e.g.
@@ -1097,6 +1117,9 @@ def save_vitals(
 	reflexes=None,
 	weight=None,
 	height=None,
+	spo2=None,
+	fbs=None,
+	rbs=None,
 	notes=None
 ):
 	_require_tab_access("nurse")
@@ -1136,6 +1159,15 @@ def save_vitals(
 		"height": (float(height) / 100) if height else None,
 		"weight": weight,
 		"bmi": _calculate_bmi(weight, height),
+
+		"custom_spo2": spo2,
+		"custom_fbs": fbs,
+		"custom_rbs": rbs,
+
+		# Always the signed-in nurse, stamped server-side - never take this
+		# from the client, or anyone could attribute a recording to
+		# whoever they like.
+		"custom_vitals_recorded_by": frappe.session.user,
 
 		"vital_signs_note": notes,
 	})
