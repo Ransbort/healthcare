@@ -99,31 +99,34 @@ def _require_tab_access(tab):
 # =============================================
 
 @frappe.whitelist()
-def bulk_send_to_nurse(encounters):
-	"""Send every currently 'Paid - Awaiting Vitals' encounter in the
+def bulk_send_to_nurse(appointments):
+	"""Send every currently 'Paid - Awaiting Vitals' appointment in the
 	given list to the nurse queue in one action. Re-checks queue_status
 	server-side rather than trusting the front-end's snapshot, in case
-	something changed between page load and this click."""
+	something changed between page load and this click.
+
+	Queue state lives on Patient Appointment, not Patient Encounter - see
+	start_consultation() below for why (the Encounter isn't created until
+	a practitioner is actually ready to see the patient)."""
 	_require_tab_access("queue")
 	import json
-	if isinstance(encounters, str):
-		encounters = json.loads(encounters)
+	if isinstance(appointments, str):
+		appointments = json.loads(appointments)
 
-	if not encounters:
+	if not appointments:
 		return {"status": "Success", "updated": []}
 
 	eligible = frappe.get_all(
-		"Patient Encounter",
+		"Patient Appointment",
 		filters={
-			"name": ["in", encounters],
+			"name": ["in", appointments],
 			"queue_status": "Paid - Awaiting Vitals",
-			"docstatus": 0,
 		},
 		pluck="name",
 	)
 
 	for name in eligible:
-		frappe.db.set_value("Patient Encounter", name, "queue_status", "With Nurse")
+		frappe.db.set_value("Patient Appointment", name, "queue_status", "With Nurse")
 
 	if eligible:
 		_notify("queue_update", {
@@ -511,47 +514,41 @@ def create_consultation(
 def get_pending_checkins(date=None, patient=None):
 	_require_tab_access("checkin")
 	"""Booked appointments for `date` that have not yet been checked in
-	(i.e. no Patient Encounter has been created against them yet)."""
+	(checked_in_at not yet stamped - see check_in_appointment() below)."""
 
 	date = date or nowdate()
 
 	filters = {
 		"appointment_date": date,
 		"status": ["!=", "Cancelled"],
+		"checked_in_at": ["in", ["", None]],
 	}
 	if patient:
 		filters["patient"] = patient
 
-	appointments = frappe.get_all(
+	return frappe.get_all(
 		"Patient Appointment",
 		filters=filters,
 		fields=["name", "patient", "patient_name", "practitioner", "practitioner_name", "appointment_time"],
 		order_by="appointment_time asc",
 	)
 
-	if not appointments:
-		return []
-
-	already_checked_in = set(frappe.get_all(
-		"Patient Encounter",
-		filters={"appointment": ["in", [a.name for a in appointments]]},
-		pluck="appointment",
-	))
-
-	return [a for a in appointments if a.name not in already_checked_in]
-
 
 # =============================================
-# CHECK-IN (creates the draft Patient Encounter
-# that carries the queue from here on)
+# CHECK-IN (stamps queue_status / checked_in_at /
+# consultation_invoice directly on Patient
+# Appointment - that's what carries the queue
+# from here on. The Patient Encounter isn't
+# created until a practitioner clicks Start
+# Consultation - see start_consultation() below.)
 # =============================================
 
 def _patient_and_practitioner_names(patient, practitioner):
 	"""Resolve display names explicitly rather than relying on Frappe's
 	automatic fetch-from mechanism, which isn't reliably populating
-	patient_name/practitioner_name when the Encounter is built from a
-	plain dict and inserted via the API (as opposed to being saved
-	through the desk form, where fetch-from is triggered on change)."""
+	patient_name/practitioner_name when a doc is built from a plain dict
+	and inserted via the API (as opposed to being saved through the desk
+	form, where fetch-from is triggered on change)."""
 	return (
 		frappe.db.get_value("Patient", patient, "patient_name"),
 		frappe.db.get_value("Healthcare Practitioner", practitioner, "practitioner_name"),
@@ -561,110 +558,90 @@ def _patient_and_practitioner_names(patient, practitioner):
 @frappe.whitelist()
 def check_in_appointment(appointment, consultation_fee=0):
 	_require_tab_access("checkin")
-	"""Patient with a booked appointment has physically arrived.
-
-	Creates the draft Patient Encounter (docstatus=0) that now owns
-	queue_status / checked_in_at / vitals_* / consultation_invoice.
-	The Patient Appointment record itself is left untouched (it stays
-	a plain schedule record) apart from being linked via `appointment`.
-	"""
+	"""Patient with a booked appointment has physically arrived."""
 
 	appt = frappe.get_doc("Patient Appointment", appointment)
 
 	_ensure_patient_enabled(appt.patient)
 
-	# Idempotency: if this appointment was already checked in, don't
-	# spin up a second Encounter — just hand back the existing one.
-	existing = frappe.db.get_value("Patient Encounter", {"appointment": appt.name}, "name")
-	if existing:
+	# Idempotency: already checked in? hand back the current state rather
+	# than re-charging / re-stamping it.
+	if appt.checked_in_at:
 		return {
 			"status": "Success",
-			"encounter": existing,
-			"invoice": frappe.db.get_value("Patient Encounter", existing, "consultation_invoice"),
-			"queue_status": frappe.db.get_value("Patient Encounter", existing, "queue_status"),
+			"appointment": appt.name,
+			"invoice": appt.consultation_invoice,
+			"queue_status": appt.queue_status,
 		}
 
-	patient_name, practitioner_name = _patient_and_practitioner_names(appt.patient, appt.practitioner)
-
-	encounter = frappe.get_doc({
-		"doctype": "Patient Encounter",
-		"patient": appt.patient,
-		"patient_name": patient_name,
-		"practitioner": appt.practitioner,
-		"practitioner_name": practitioner_name,
-		"medical_department": appt.department,
-		# Patient Encounter has appointment_type as a mandatory field of
-		# its own — inherit it from the booking rather than asking the
-		# front-desk user to re-enter something already captured.
-		"appointment_type": appt.appointment_type,
-		"appointment": appt.name,
-		"encounter_date": nowdate(),
-		"encounter_time": nowtime(),
-		"queue_status": "Registered",
-		"checked_in_at": now_datetime(),
-	})
-	encounter.insert(ignore_permissions=True)
-
-	return _finalize_checkin(encounter, appt.patient, consultation_fee)
+	return _check_in(appt, consultation_fee)
 
 
 @frappe.whitelist()
-def create_walkin_encounter(patient, practitioner, appointment_type, department=None, consultation_fee=0):
+def create_walkin_checkin(patient, practitioner, appointment_type, department=None, consultation_fee=0):
 	_require_tab_access("checkin")
-	"""Walk-in patient with no prior booking. Skips Patient Appointment
-	entirely and creates the draft Patient Encounter directly.
-
-	appointment_type is required because Patient Encounter itself has it
-	as a mandatory field with no Patient Appointment to inherit it from.
-	"""
+	"""Walk-in patient with no prior booking. Creates today's Patient
+	Appointment on the spot (same shape create_consultation() books ahead
+	of time), then checks it straight in - see check_in_appointment()
+	above for what that means. No Patient Encounter is created yet."""
 
 	_ensure_patient_enabled(patient)
 
-	patient_name, practitioner_name = _patient_and_practitioner_names(patient, practitioner)
+	duration = int(_resolve_duration(appointment_type))
+	appointment_datetime = f"{nowdate()} {nowtime()}"
+	appointment_end_datetime = add_to_date(appointment_datetime, minutes=duration)
 
-	encounter = frappe.get_doc({
-		"doctype": "Patient Encounter",
+	appt = frappe.get_doc({
+		"doctype": "Patient Appointment",
 		"patient": patient,
-		"patient_name": patient_name,
 		"practitioner": practitioner,
-		"practitioner_name": practitioner_name,
-		"medical_department": department,
+		"department": department,
 		"appointment_type": appointment_type,
-		"encounter_date": nowdate(),
-		"encounter_time": nowtime(),
-		"queue_status": "Registered",
-		"checked_in_at": now_datetime(),
+		"appointment_date": nowdate(),
+		"appointment_time": nowtime(),
+		"appointment_datetime": appointment_datetime,
+		"appointment_end_datetime": appointment_end_datetime,
+		"duration": duration,
+		"status": "Open",
 	})
-	encounter.insert(ignore_permissions=True)
+	appt.insert(ignore_permissions=True)
 
-	return _finalize_checkin(encounter, patient, consultation_fee)
+	return _check_in(appt, consultation_fee)
 
 
-def _finalize_checkin(encounter, patient, consultation_fee):
+def _check_in(appt, consultation_fee):
+	"""Common tail for both check_in_appointment() and
+	create_walkin_checkin(): stamp checked_in_at and hand off to
+	_finalize_checkin() for the payment-status / invoice part."""
+	appt.db_set("checked_in_at", now_datetime())
+	return _finalize_checkin(appt, appt.patient, consultation_fee)
+
+
+def _finalize_checkin(appt, patient, consultation_fee):
 
 	invoice_name = None
 
 	if float(consultation_fee or 0) > 0:
-		invoice_name = _create_consultation_invoice(patient, consultation_fee, encounter.name)
-		encounter.db_set("consultation_invoice", invoice_name)
-		encounter.db_set("queue_status", "Payment Pending")
+		invoice_name = _create_consultation_invoice(patient, consultation_fee, appt.name)
+		appt.db_set("consultation_invoice", invoice_name)
+		appt.db_set("queue_status", "Payment Pending")
 		_notify("queue_update", {
 			"department": "cashier",
 			"message": f"New invoice pending: {invoice_name}",
-			"encounter": encounter.name,
+			"encounter": None,
 		})
 	else:
-		encounter.db_set("queue_status", "Paid - Awaiting Vitals")
+		appt.db_set("queue_status", "Paid - Awaiting Vitals")
 
 	return {
 		"status": "Success",
-		"encounter": encounter.name,
+		"appointment": appt.name,
 		"invoice": invoice_name,
-		"queue_status": encounter.queue_status,
+		"queue_status": appt.queue_status,
 	}
 
 
-def _create_consultation_invoice(patient, amount, encounter_name):
+def _create_consultation_invoice(patient, amount, appointment_name):
 	"""Create the consultation Sales Invoice, submitted but UNPAID —
 	outstanding_amount == grand_total. The Cashier Portal is responsible
 	for actually receiving payment against this invoice (via whatever
@@ -673,8 +650,10 @@ def _create_consultation_invoice(patient, amount, encounter_name):
 
 	custom_department = "Consultation" tags this invoice the same way
 	Pharmacy/Spa invoices are tagged (see setup.py's get_custom_fields()),
-	so it can be bucketed into its own tab on the Cashier Portal instead
-	of falling into "Other" unlabelled.
+	so it's correctly bucketed rather than falling into "Other"
+	unlabelled - Cashier Portal doesn't have a dedicated Consultation tab
+	today, but tagging it correctly here means one can be added later
+	without a data migration.
 	"""
 
 	patient_doc = frappe.get_doc("Patient", patient)
@@ -690,6 +669,7 @@ def _create_consultation_invoice(patient, amount, encounter_name):
 		"company": default_company,
 		"posting_date": nowdate(),
 		"due_date": nowdate(),
+		"custom_department": "Consultation",
 
 		"items": [{
 			"item_code": "Consultation",
@@ -697,7 +677,7 @@ def _create_consultation_invoice(patient, amount, encounter_name):
 			"rate": float(amount),
 		}],
 
-		"remarks": f"Consultation fee for Patient Encounter {encounter_name}",
+		"remarks": f"Consultation fee for Patient Appointment {appointment_name}",
 	})
 
 	invoice.insert(ignore_permissions=True)
@@ -709,7 +689,7 @@ def on_payment_entry_submit(doc, method=None):
 	"""Doc event hook (wire up in hooks.py against Payment Entry's
 	on_submit) — once a Payment Entry is submitted against a
 	consultation invoice we created, check if that invoice is now
-	fully paid and, if so, advance the linked encounter from
+	fully paid and, if so, advance the linked appointment from
 	Payment Pending to Paid - Awaiting Vitals.
 
 	Hooking here instead of Sales Invoice's on_update: ERPNext updates
@@ -731,25 +711,25 @@ def on_payment_entry_submit(doc, method=None):
 		if outstanding != 0:
 			continue
 
-		_advance_consultation_encounter(ref.reference_name)
+		_advance_consultation_appointment(ref.reference_name)
 		_enable_patient_after_registration_payment(ref.reference_name)
 
 
-def _advance_consultation_encounter(invoice_name):
-	encounter_name = frappe.db.get_value(
-		"Patient Encounter",
+def _advance_consultation_appointment(invoice_name):
+	appointment_name = frappe.db.get_value(
+		"Patient Appointment",
 		{"consultation_invoice": invoice_name, "queue_status": "Payment Pending"},
 		"name",
 	)
-	if not encounter_name:
+	if not appointment_name:
 		return
 
-	frappe.db.set_value("Patient Encounter", encounter_name, "queue_status", "Paid - Awaiting Vitals")
-	patient_name = frappe.db.get_value("Patient Encounter", encounter_name, "patient_name")
+	frappe.db.set_value("Patient Appointment", appointment_name, "queue_status", "Paid - Awaiting Vitals")
+	patient_name = frappe.db.get_value("Patient Appointment", appointment_name, "patient_name")
 	_notify("queue_update", {
 		"department": "nurse",
 		"message": f"{patient_name} paid — ready for vitals",
-		"encounter": encounter_name,
+		"encounter": None,
 	})
 
 
@@ -782,9 +762,9 @@ def _enable_patient_after_registration_payment(invoice_name):
 	})
 
 # =============================================
-# QUEUE (reads Patient Encounter, filtered to
-# docstatus=0 — a submitted Encounter has
-# already left the front-desk queue)
+# QUEUE (reads Patient Appointment, filtered to
+# checked_in_at being set — a not-yet-arrived
+# appointment isn't in the front-desk queue yet)
 # =============================================
 
 @frappe.whitelist()
@@ -799,15 +779,20 @@ def get_queue(date=None, queue_status=None):
 	date = date or nowdate()
 
 	filters = {
-		"encounter_date": date,
-		"docstatus": 0,
+		"appointment_date": date,
+		"checked_in_at": ["not in", ["", None]],
 	}
 
 	if queue_status:
 		filters["queue_status"] = queue_status
+	else:
+		# The general Queue tab (no specific queue_status requested) shows
+		# everyone still moving through the pipeline today - not anyone
+		# who's already finished with the doctor.
+		filters["queue_status"] = ["!=", "Completed"]
 
 	rows = frappe.get_all(
-		"Patient Encounter",
+		"Patient Appointment",
 
 		filters=filters,
 
@@ -819,11 +804,9 @@ def get_queue(date=None, queue_status=None):
 			"practitioner",
 			"practitioner_name",
 
-			"medical_department",
+			"department",
 
-			"appointment",
-
-			"encounter_time",
+			"appointment_time",
 
 			"queue_status",
 
@@ -832,22 +815,30 @@ def get_queue(date=None, queue_status=None):
 			"checked_in_at",
 		],
 
-		order_by="encounter_time asc",
+		order_by="appointment_time asc",
 	)
 
-	# Vitals now live on the standard "Vital Signs" doctype (one submitted
-	# doc per nurse-station recording, linked back via its `encounter`
-	# field) rather than as columns on Patient Encounter. Pull the latest
-	# submitted Vital Signs per encounter and fold it into each row under
-	# the same vitals_* keys the front-end already reads, so front_desk.js
-	# doesn't need to change.
-	encounter_ids = [row["name"] for row in rows]
-	if encounter_ids:
+	# front_desk.js reads these under their original (Patient
+	# Encounter-era) key names - alias here rather than touch every
+	# render/lookup call site on the front-end.
+	for row in rows:
+		row["medical_department"] = row.pop("department")
+		row["encounter_time"] = row.pop("appointment_time")
+
+	# Vitals live on the standard "Vital Signs" doctype (one submitted doc
+	# per nurse-station recording). It's linked back via its `appointment`
+	# field now, not `encounter` - the Encounter doesn't exist yet at the
+	# point vitals get recorded; see save_vitals() below and
+	# start_consultation() for where the Encounter finally gets created.
+	# Pull the latest submitted Vital Signs per appointment and fold it
+	# into each row under the same vitals_* keys the front-end reads.
+	appointment_ids = [row["name"] for row in rows]
+	if appointment_ids:
 		vitals = frappe.get_all(
 			"Vital Signs",
-			filters={"encounter": ["in", encounter_ids], "docstatus": 1},
+			filters={"appointment": ["in", appointment_ids], "docstatus": 1},
 			fields=[
-				"encounter",
+				"appointment",
 				"temperature",
 				"bp",
 				"pulse",
@@ -860,14 +851,14 @@ def get_queue(date=None, queue_status=None):
 			order_by="creation desc",
 		)
 		# order_by desc + first-write-wins gives the latest Vital Signs per
-		# encounter (an encounter can in principle have more than one, e.g.
-		# a re-check).
-		latest_vitals_by_encounter = {}
+		# appointment (an appointment can in principle have more than one,
+		# e.g. a re-check).
+		latest_vitals_by_appointment = {}
 		for v in vitals:
-			latest_vitals_by_encounter.setdefault(v["encounter"], v)
+			latest_vitals_by_appointment.setdefault(v["appointment"], v)
 
 		for row in rows:
-			v = latest_vitals_by_encounter.get(row["name"])
+			v = latest_vitals_by_appointment.get(row["name"])
 			row["vitals_temperature"] = v["temperature"] if v else None
 			row["vitals_blood_pressure"] = v["bp"] if v else None
 			row["vitals_pulse"] = v["pulse"] if v else None
@@ -877,11 +868,11 @@ def get_queue(date=None, queue_status=None):
 			row["vitals_rbs"] = v["custom_rbs"] if v else None
 			row["vitals_notes"] = v["vital_signs_note"] if v else None
 
-	# patient_name stored on the Encounter can be stale/incomplete (e.g.
+	# patient_name stored on the Appointment can be stale/incomplete (e.g.
 	# just a first name) depending on what was on the Patient record at
-	# check-in time. Always resolve the full display name fresh from
+	# booking time. Always resolve the full display name fresh from
 	# the Patient doctype (first_name + last_name) rather than trusting
-	# whatever got cached on the Encounter.
+	# whatever got cached on the Appointment.
 	patient_ids = list({row["patient"] for row in rows if row.get("patient")})
 	if patient_ids:
 		patients = frappe.get_all(
@@ -916,10 +907,10 @@ def get_queue(date=None, queue_status=None):
 # =============================================
 
 @frappe.whitelist()
-def send_to_nurse(encounter):
+def send_to_nurse(appointment):
 	_require_tab_access("queue")
-	frappe.db.set_value("Patient Encounter", encounter, "queue_status", "With Nurse")
-	patient_name = frappe.db.get_value("Patient Encounter", encounter, "patient_name")
+	frappe.db.set_value("Patient Appointment", appointment, "queue_status", "With Nurse")
+	patient_name = frappe.db.get_value("Patient Appointment", appointment, "patient_name")
 	_notify("queue_update", {
 		"department": "nurse",
 		"message": f"{patient_name} sent to nurse station",
@@ -973,7 +964,7 @@ def _split_blood_pressure(blood_pressure):
 
 @frappe.whitelist()
 def save_vitals(
-	encounter,
+	appointment,
 	temperature=None,
 	blood_pressure=None,
 	pulse=None,
@@ -986,9 +977,7 @@ def save_vitals(
 ):
 	_require_tab_access("nurse")
 
-	encounter_doc = frappe.db.get_value(
-		"Patient Encounter", encounter, ["patient", "appointment"], as_dict=True
-	)
+	appt = frappe.db.get_value("Patient Appointment", appointment, ["patient"], as_dict=True)
 	bp_systolic, bp_diastolic = _split_blood_pressure(blood_pressure)
 	default_company = frappe.defaults.get_global_default("company")
 
@@ -996,9 +985,12 @@ def save_vitals(
 		"doctype": "Vital Signs",
 		"naming_series": "HLC-VTS-.YYYY.-",
 
-		"patient": encounter_doc.patient,
-		"appointment": encounter_doc.appointment,
-		"encounter": encounter,
+		"patient": appt.patient,
+		"appointment": appointment,
+		# No Patient Encounter exists yet at this point - it's only
+		# created once a practitioner clicks Start Consultation, see
+		# start_consultation() below, which backfills this Vital Signs
+		# doc's `encounter` field once that happens.
 		"company": default_company,
 
 		"signs_date": nowdate(),
@@ -1026,13 +1018,13 @@ def save_vitals(
 	vitals_doc.insert(ignore_permissions=True)
 	vitals_doc.submit()
 
-	frappe.db.set_value("Patient Encounter", encounter, "queue_status", "With Doctor")
+	frappe.db.set_value("Patient Appointment", appointment, "queue_status", "With Doctor")
 
-	patient_name = frappe.db.get_value("Patient Encounter", encounter, "patient_name")
+	patient_name = frappe.db.get_value("Patient Appointment", appointment, "patient_name")
 	_notify("queue_update", {
 		"department": "doctor",
 		"message": f"{patient_name} ready for consultation",
-		"encounter": encounter,
+		"encounter": None,
 	})
 
 	return {"status": "Success"}
@@ -1043,27 +1035,77 @@ def save_vitals(
 # =============================================
 
 @frappe.whitelist()
-def start_consultation(encounter):
+def start_consultation(appointment):
 	_require_tab_access("doctor")
-	"""The Encounter already exists (created at check-in) — this just
-	flips it into 'In Consultation' so the doctor can open and complete
-	the same draft document."""
+	"""Practitioner is ready to see this patient - this is where the
+	Patient Encounter actually gets created (not at check-in), pre-filled
+	from the appointment. Queue tracking keeps living on the Patient
+	Appointment right through to Completed - see on_patient_encounter_submit()
+	below."""
 
-	enc = frappe.get_doc("Patient Encounter", encounter)
+	appt = frappe.get_doc("Patient Appointment", appointment)
 
-	frappe.db.set_value("Patient Encounter", encounter, "queue_status", "In Consultation")
+	# Idempotency: if this appointment somehow already has an Encounter
+	# (e.g. a double-click), reuse it instead of creating a second one.
+	existing = frappe.db.get_value("Patient Encounter", {"appointment": appt.name}, "name")
+	if existing:
+		frappe.db.set_value("Patient Appointment", appointment, "queue_status", "In Consultation")
+		return {
+			"status": "Success",
+			"patient": appt.patient,
+			"practitioner": appt.practitioner,
+			"encounter": existing,
+		}
+
+	patient_name, practitioner_name = _patient_and_practitioner_names(appt.patient, appt.practitioner)
+
+	encounter = frappe.get_doc({
+		"doctype": "Patient Encounter",
+		"patient": appt.patient,
+		"patient_name": patient_name,
+		"practitioner": appt.practitioner,
+		"practitioner_name": practitioner_name,
+		"medical_department": appt.department,
+		# Patient Encounter has appointment_type as a mandatory field of
+		# its own — inherit it from the booking rather than asking the
+		# doctor to re-enter something already captured.
+		"appointment_type": appt.appointment_type,
+		"appointment": appt.name,
+		"encounter_date": nowdate(),
+		"encounter_time": nowtime(),
+	})
+	encounter.insert(ignore_permissions=True)
+	# Patient Encounter's own on_update() (see patient_encounter.py, not
+	# customized here) closes the Patient Appointment the moment
+	# `appointment` is set on an inserted/saved Encounter - nothing extra
+	# needed here for that.
+
+	# Link whatever vitals the nurse already recorded against the
+	# appointment back to the new Encounter too, so anything that expects
+	# vitals to be reachable from the Encounter side (print formats,
+	# reports) still finds them.
+	frappe.db.set_value(
+		"Vital Signs",
+		{"appointment": appt.name, "docstatus": 1},
+		"encounter",
+		encounter.name,
+	)
+
+	frappe.db.set_value("Patient Appointment", appointment, "queue_status", "In Consultation")
 
 	return {
 		"status": "Success",
-		"patient": enc.patient,
-		"practitioner": enc.practitioner,
-		"encounter": enc.name,
+		"patient": encounter.patient,
+		"practitioner": encounter.practitioner,
+		"encounter": encounter.name,
 	}
 
 
 def on_patient_encounter_submit(doc, method=None):
-	"""Doctor completes + submits the Encounter -> queue_status = Completed.
-	No more lookup into Patient Appointment: the queue state lives on
-	this document itself now."""
+	"""Doctor completes + submits the Encounter -> the linked Patient
+	Appointment's queue_status becomes Completed. Queue state lives on
+	the Appointment for the whole visit now, not on the Encounter - see
+	start_consultation() above for where the Encounter gets created."""
 
-	doc.db_set("queue_status", "Completed")
+	if doc.appointment:
+		frappe.db.set_value("Patient Appointment", doc.appointment, "queue_status", "Completed")

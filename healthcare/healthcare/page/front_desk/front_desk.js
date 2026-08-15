@@ -800,8 +800,10 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		dialog.show();
 	}
 
-	// Check-in: either check in a picked appointment, or create a
-	// walk-in encounter with no prior booking.
+	// Check-in: either check in a picked appointment, or book + check in
+	// a walk-in appointment on the spot. Either way, no Patient Encounter
+	// is created here - only at Start Consultation, see the Doctor Queue
+	// tab below.
 	page.main.find('#create-consultation-btn').on('click', function() {
 		const appointment = ci_appointment.get_value();
 
@@ -837,7 +839,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		}
 
 		frappe.call({
-			method: 'healthcare.healthcare.page.front_desk.front_desk.create_walkin_encounter',
+			method: 'healthcare.healthcare.page.front_desk.front_desk.create_walkin_checkin',
 			args: {
 				patient: patient,
 				practitioner: practitioner,
@@ -853,7 +855,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 
 	function handleCheckinResponse(r) {
 		if (r.message && r.message.status === 'Success') {
-			let msg = __('Checked in — {0}', [r.message.encounter]);
+			let msg = __('Checked in — {0}', [r.message.appointment]);
 			if (r.message.invoice) {
 				msg += ' — ' + __('Invoice {0} created, awaiting payment at Cashier Portal', [r.message.invoice]);
 			}
@@ -919,7 +921,7 @@ let currentQueueRows = [];
 			function() {
 				frappe.call({
 					method: 'healthcare.healthcare.page.front_desk.front_desk.bulk_send_to_nurse',
-					args: { encounters: eligible.map(r => r.name) },
+					args: { appointments: eligible.map(r => r.name) },
 					freeze: true,
 					freeze_message: __('Sending to nurse...'),
 					callback: function(r) {
@@ -1000,7 +1002,7 @@ function loadQueue() {
 			const name = $(this).data('name');
 			frappe.call({
 				method: 'healthcare.healthcare.page.front_desk.front_desk.send_to_nurse',
-				args: { encounter: name },
+				args: { appointment: name },
 				callback: function() {
 					frappe.show_alert({ message: __('Sent to nurse'), indicator: 'green' }, 4);
 					loadQueue();
@@ -1131,7 +1133,7 @@ function loadQueue() {
 			frappe.call({
 				method: 'healthcare.healthcare.page.front_desk.front_desk.save_vitals',
 				args: {
-					encounter: name,
+					appointment: name,
 					temperature: c.temp.get_value(),
 					blood_pressure: c.bp.get_value(),
 					pulse: c.pulse.get_value(),
@@ -1212,11 +1214,11 @@ function loadQueue() {
 			const name = $(this).data('name');
 			frappe.call({
 				method: 'healthcare.healthcare.page.front_desk.front_desk.start_consultation',
-				args: { encounter: name },
+				args: { appointment: name },
 				callback: function(r) {
 					if (r.message && r.message.status === 'Success') {
-						// The Encounter already exists (created at check-in) —
-						// open it directly instead of creating a new one.
+						// Creates the Patient Encounter (if one doesn't already
+						// exist for this appointment) and opens it.
 						frappe.set_route('Form', 'Patient Encounter', r.message.encounter);
 					}
 				}
