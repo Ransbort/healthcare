@@ -40,7 +40,14 @@ app_include_js = "healthcare.bundle.js"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Sales Invoice": "public/js/sales_invoice.js"}
+doctype_js = {
+	"Sales Invoice": "public/js/sales_invoice.js",
+	# Adds the "pending admission order" headline/cancel-button on the
+	# Patient Encounter form once "Order Admission" is intercepted server
+	# side (see override_whitelisted_methods below). Loaded alongside
+	# patient_encounter.js, not a replacement for it.
+	"Patient Encounter": "public/js/patient_encounter_admission_order.js",
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -210,9 +217,15 @@ scheduler_events = {
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "healthcare.event.get_events"
-# }
+# Patient Encounter's "Order Admission" dialog calls
+# inpatient_record.schedule_inpatient directly (patient_encounter.js is not
+# edited for this). Redirecting it here means that call now creates a
+# pending Admission Order instead of the Inpatient Record straight away -
+# a Nursing User must Accept it (admission_order.accept_admission_order)
+# before the Inpatient Record is created.
+override_whitelisted_methods = {
+	"healthcare.healthcare.doctype.inpatient_record.inpatient_record.schedule_inpatient": "healthcare.healthcare.doctype.admission_order.admission_order.create_admission_order",
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,

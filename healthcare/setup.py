@@ -2426,4 +2426,44 @@ def get_custom_fields():
 			},
 		],
 
+		# Nurse-acceptance step for inpatient admissions (see
+		# healthcare/healthcare/doctype/admission_order/admission_order.py).
+		# The Patient Encounter's "Order Admission" button is intercepted via
+		# hooks.py's override_whitelisted_methods so it creates a pending
+		# Admission Order instead of the Inpatient Record directly. This
+		# field tracks that pending order on the encounter so the additive
+		# client script (public/js/patient_encounter_admission_order.js,
+		# wired in via hooks.py's doctype_js) can show it and offer to
+		# cancel it - without editing patient_encounter.json/py/js.
+		"Patient Encounter": [
+			{
+				"fieldname": "custom_pending_admission_order",
+				"label": "Pending Admission Order",
+				"fieldtype": "Link",
+				"insert_after": "inpatient_status",
+				"options": "Admission Order",
+				"reqd": 0,
+				"hidden": 0,
+				"read_only": 1,
+				"no_copy": 1,
+			},
+		],
+		# Traceability from the Inpatient Record back to the Admission Order
+		# a Nursing User accepted to create it - set in
+		# admission_order.accept_admission_order(), without editing
+		# inpatient_record.json/py.
+		"Inpatient Record": [
+			{
+				"fieldname": "custom_admission_order",
+				"label": "Admission Order",
+				"fieldtype": "Link",
+				"insert_after": "admission_encounter",
+				"options": "Admission Order",
+				"reqd": 0,
+				"hidden": 0,
+				"read_only": 1,
+				"no_copy": 1,
+			},
+		],
+
 	}

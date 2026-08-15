@@ -1,0 +1,259 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "creation": "2026-08-15 00:00:00.000000",
+ "default_view": "List",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "patient",
+  "patient_name",
+  "column_break_pat",
+  "admission_encounter",
+  "referring_practitioner",
+  "company",
+  "section_break_admission",
+  "medical_department",
+  "primary_practitioner",
+  "secondary_practitioner",
+  "admission_nursing_checklist_template",
+  "column_break_admission",
+  "admission_ordered_for",
+  "admission_service_unit_type",
+  "expected_length_of_stay",
+  "treatment_plan_template",
+  "section_break_instruction",
+  "admission_instruction",
+  "section_break_status",
+  "status",
+  "column_break_status",
+  "inpatient_record",
+  "rejection_reason",
+  "section_break_more_info",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "HLC-ADM-.YYYY.-",
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "patient",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Patient",
+   "options": "Patient",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "patient.patient_name",
+   "fieldname": "patient_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Patient Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_pat",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "admission_encounter",
+   "fieldtype": "Link",
+   "label": "Admission Encounter",
+   "options": "Patient Encounter",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "referring_practitioner",
+   "fieldtype": "Link",
+   "label": "Referring Practitioner",
+   "options": "Healthcare Practitioner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "section_break_admission",
+   "fieldtype": "Section Break",
+   "label": "Admission Details"
+  },
+  {
+   "fieldname": "medical_department",
+   "fieldtype": "Link",
+   "label": "Medical Department",
+   "options": "Medical Department",
+   "reqd": 1
+  },
+  {
+   "fieldname": "primary_practitioner",
+   "fieldtype": "Link",
+   "label": "Healthcare Practitioner (Primary)",
+   "options": "Healthcare Practitioner",
+   "reqd": 1
+  },
+  {
+   "fieldname": "secondary_practitioner",
+   "fieldtype": "Link",
+   "label": "Healthcare Practitioner (Secondary)",
+   "options": "Healthcare Practitioner"
+  },
+  {
+   "fieldname": "admission_nursing_checklist_template",
+   "fieldtype": "Link",
+   "label": "Nursing Checklist Template",
+   "options": "Nursing Checklist Template"
+  },
+  {
+   "fieldname": "column_break_admission",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "admission_ordered_for",
+   "fieldtype": "Date",
+   "label": "Admission Ordered For"
+  },
+  {
+   "fieldname": "admission_service_unit_type",
+   "fieldtype": "Link",
+   "label": "Service Unit Type",
+   "options": "Healthcare Service Unit Type"
+  },
+  {
+   "fieldname": "expected_length_of_stay",
+   "fieldtype": "Int",
+   "label": "Expected Length of Stay"
+  },
+  {
+   "fieldname": "treatment_plan_template",
+   "fieldtype": "Link",
+   "label": "Treatment Plan Template",
+   "options": "Treatment Plan Template"
+  },
+  {
+   "fieldname": "section_break_instruction",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "admission_instruction",
+   "fieldtype": "Long Text",
+   "label": "Admission Instructions"
+  },
+  {
+   "fieldname": "section_break_status",
+   "fieldtype": "Section Break",
+   "label": "Nurse Response"
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nAccepted\nRejected\nCancelled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "inpatient_record",
+   "fieldtype": "Link",
+   "label": "Inpatient Record",
+   "options": "Inpatient Record",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "depends_on": "eval:doc.status==\"Rejected\"",
+   "fieldname": "rejection_reason",
+   "fieldtype": "Small Text",
+   "label": "Reason for Rejection",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_more_info",
+   "fieldtype": "Section Break",
+   "label": "More Information"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Admission Order",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-08-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Healthcare",
+ "name": "Admission Order",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Healthcare Administrator",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Physician",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Nursing User",
+   "share": 1
+  }
+ ],
+ "restrict_to_domain": "Healthcare",
+ "row_format": "Dynamic",
+ "search_fields": "patient,status",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "patient_name",
+ "track_changes": 1
+}
