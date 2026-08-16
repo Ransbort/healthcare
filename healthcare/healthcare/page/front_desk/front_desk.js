@@ -230,6 +230,9 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 							<div data-fieldname="np_dob"></div>
 							<div data-fieldname="np_uid"></div>
 						</div>
+						<div class="form-grid">
+							<div data-fieldname="np_email"></div>
+						</div>
 						<button class="btn btn-sm btn-secondary" id="register-patient-btn">
 							<i class="fa fa-plus"></i> Register Patient
 						</button>
@@ -415,38 +418,49 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 
 	let np_last_name = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_last_name"]'),
-		df: { fieldtype: 'Data', fieldname: 'np_last_name', label: 'Last Name' },
+		df: { fieldtype: 'Data', fieldname: 'np_last_name', label: 'Last Name', reqd: 1 },
 		render_input: true
 	});
 	np_last_name.refresh();
 
 	let np_mobile = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_mobile"]'),
-		df: { fieldtype: 'Data', fieldname: 'np_mobile', label: 'Mobile', options: 'Phone' },
+		df: { fieldtype: 'Data', fieldname: 'np_mobile', label: 'Mobile', options: 'Phone', reqd: 1 },
 		render_input: true
 	});
 	np_mobile.refresh();
 
 	let np_gender = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_gender"]'),
-		df: { fieldtype: 'Select', fieldname: 'np_gender', label: 'Gender', options: 'Male\nFemale\nOther' },
+		df: { fieldtype: 'Select', fieldname: 'np_gender', label: 'Gender', options: 'Male\nFemale\nOther', reqd: 1 },
 		render_input: true
 	});
 	np_gender.refresh();
 
 	let np_dob = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_dob"]'),
-		df: { fieldtype: 'Date', fieldname: 'np_dob', label: 'Date of Birth' },
+		df: { fieldtype: 'Date', fieldname: 'np_dob', label: 'Date of Birth', reqd: 1 },
 		render_input: true
 	});
 	np_dob.refresh();
 
 	let np_uid = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="np_uid"]'),
+		// Not required, unlike the fields above - it's often generated
+		// server-side (see setUidFieldMode()/auto_generate_patient_uid
+		// below), so forcing it here would block registration on a
+		// field staff frequently aren't meant to type into at all.
 		df: { fieldtype: 'Data', fieldname: 'np_uid', label: 'Identification Number (UID)' },
 		render_input: true
 	});
 	np_uid.refresh();
+
+	let np_email = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="np_email"]'),
+		df: { fieldtype: 'Data', fieldname: 'np_email', label: 'Email', options: 'Email' },
+		render_input: true
+	});
+	np_email.refresh();
 
 	// Whether the UID is typed in here or generated server-side is a
 	// Healthcare Settings toggle - fetch it once on load so the field
@@ -722,19 +736,39 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	// Register new patient
 	page.main.find('#register-patient-btn').on('click', function() {
 		const first = np_first_name.get_value();
-		if (!first) {
-			frappe.show_alert({ message: __('First name is required'), indicator: 'orange' }, 5);
+		const last = np_last_name.get_value();
+		const mobile = np_mobile.get_value();
+		const gender = np_gender.get_value();
+		const dob = np_dob.get_value();
+		const email = np_email.get_value();
+
+		// UID is deliberately excluded - it's often auto-generated
+		// server-side (see setUidFieldMode()), not something staff
+		// necessarily type in here. Email is also excluded - optional,
+		// unlike the rest of this list.
+		const missing = [
+			[first, __('First Name')],
+			[last, __('Last Name')],
+			[mobile, __('Mobile')],
+			[gender, __('Gender')],
+			[dob, __('Date of Birth')],
+		].filter(function(pair) { return !pair[0]; }).map(function(pair) { return pair[1]; });
+
+		if (missing.length) {
+			frappe.show_alert({ message: __('Please fill in: {0}', [missing.join(', ')]), indicator: 'orange' }, 5);
 			return;
 		}
+
 		frappe.call({
 			method: 'healthcare.healthcare.page.front_desk.front_desk.create_walkin_patient',
 			args: {
 				first_name: first,
-				last_name: np_last_name.get_value(),
-				mobile: np_mobile.get_value(),
-				gender: np_gender.get_value(),
-				dob: np_dob.get_value(),
-				uid: np_uid.get_value()
+				last_name: last,
+				mobile: mobile,
+				gender: gender,
+				dob: dob,
+				uid: np_uid.get_value(),
+				email: email
 			},
 			freeze: true,
 			freeze_message: __('Registering patient...'),
@@ -770,6 +804,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			[__('Gender'), details.gender],
 			[__('Date of Birth'), frappe.datetime.str_to_user(details.dob)],
 			[__('UID'), details.uid],
+			[__('Email'), details.email],
 		].filter(function(row) { return row[1]; });
 
 		const displayName = [details.first_name, details.last_name].filter(Boolean).join(' ');
@@ -983,6 +1018,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			np_gender.set_value('');
 			np_dob.set_value('');
 			np_uid.set_value('');
+			np_email.set_value('');
 			setUidFieldMode();
 			ci_fee.set_value(0);
 			registeredPatient = null;

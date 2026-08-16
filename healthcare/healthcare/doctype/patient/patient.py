@@ -207,7 +207,6 @@ class Patient(Document):
 
 		sales_invoice = make_invoice(self.name, company)
 		sales_invoice.insert(ignore_permissions=True)
-
 		send_registration_sms(self)
 
 		return sales_invoice.as_dict()

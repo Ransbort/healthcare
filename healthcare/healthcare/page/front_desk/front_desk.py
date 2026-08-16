@@ -221,7 +221,7 @@ def _resolve_patient_uid(uid):
 
 
 def _defer_customer_creation(patient_doc):
-	"""Patient.validate() (see healthcare/healthcare/doctype/patient/patient.py
+	"""Patient.on_update() (see healthcare/healthcare/doctype/patient/patient.py
 	in the core Healthcare app) auto-creates and links a Customer as part
 	of patient.insert() itself, whenever Healthcare Settings has "Link
 	Customer to Patient" enabled - before any of our code below even
@@ -229,9 +229,17 @@ def _defer_customer_creation(patient_doc):
 	actually confirmed the registration in the popup, so immediately
 	undo it here: delete the just-created Customer and clear the link.
 	It's re-created in _create_customer_for_patient() once
-	confirm_patient_registration() runs - nothing else can have
-	referenced this Customer yet since the Patient itself was only
-	just inserted.
+	confirm_patient_registration() runs.
+
+	One complication: that same on_update() call runs set_contact()
+	right after create_customer(), by which point self.customer is
+	already set - so it also creates a Contact linked to BOTH the
+	Patient and this brand-new Customer, in the same request. That
+	Contact link blocks deleting the Customer below (Frappe won't
+	delete a Customer something still links to), so it has to be
+	stripped off the Contact first - just the Customer link row, not
+	the whole Contact, since the Patient's own link on it is legitimate
+	and worth keeping.
 	"""
 
 	customer_name = patient_doc.customer
@@ -239,6 +247,25 @@ def _defer_customer_creation(patient_doc):
 		return
 
 	patient_doc.db_set("customer", None, update_modified=False)
+
+	contact_name = frappe.db.get_value(
+		"Dynamic Link",
+		{"link_doctype": "Customer", "link_name": customer_name, "parenttype": "Contact"},
+		"parent",
+	)
+	if contact_name:
+		try:
+			contact = frappe.get_doc("Contact", contact_name)
+			contact.links = [
+				link for link in contact.links
+				if not (link.link_doctype == "Customer" and link.link_name == customer_name)
+			]
+			contact.save(ignore_permissions=True)
+		except Exception:
+			frappe.log_error(
+				title="Front Desk: could not unlink auto-created Contact before deferring Customer",
+				message=frappe.get_traceback(),
+			)
 
 	if frappe.db.exists("Customer", customer_name):
 		try:
@@ -274,7 +301,15 @@ def _create_customer_for_patient(patient_doc):
 
 
 @frappe.whitelist()
-def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, dob=None, uid=None):
+def create_walkin_patient(
+	first_name,
+	last_name=None,
+	mobile=None,
+	gender=None,
+	dob=None,
+	uid=None,
+	email=None,
+):
 	_require_tab_access("checkin")
 	"""Register a brand-new walk-in patient.
 
@@ -299,6 +334,25 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 	them.
 	"""
 
+	# Defense in depth: the front-end form already marks these required
+	# (matching Healthcare's own native New Patient quick-entry, which
+	# has the same fields), but this is a whitelisted endpoint reachable
+	# on its own - don't rely on the client to enforce it. Email is
+	# deliberately not in this list - it's optional, both here and on
+	# the front-end.
+	missing = [
+		label
+		for value, label in (
+			(last_name, _("Last Name")),
+			(mobile, _("Mobile")),
+			(gender, _("Gender")),
+			(dob, _("Date of Birth")),
+		)
+		if not value
+	]
+	if missing:
+		frappe.throw(_("Please provide: {0}").format(", ".join(missing)))
+
 	patient = frappe.get_doc({
 		"doctype": "Patient",
 		"first_name": first_name,
@@ -307,6 +361,14 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 		"sex": gender,
 		"dob": dob,
 		"uid": _resolve_patient_uid(uid),
+		"email": email,
+		# Patient.invite_user defaults to checked (1) at the doctype
+		# level, which would silently create a portal account
+		# (Patient.validate() -> create_website_user() in
+		# healthcare/patient.py) for every walk-in with an email -
+		# forced off here, since Front Desk doesn't offer any way for
+		# the operator to grant portal access from this form.
+		"invite_user": 0,
 	})
 
 	patient.insert(ignore_permissions=True)
@@ -334,6 +396,7 @@ def create_walkin_patient(first_name, last_name=None, mobile=None, gender=None, 
 		"gender": patient.sex,
 		"dob": patient.dob,
 		"uid": patient.uid,
+		"email": patient.email,
 		"patient_status": frappe.db.get_value("Patient", patient.name, "status"),
 		"fee_will_be_charged": collect_fee,
 		"registration_fee": registration_fee,
@@ -358,6 +421,22 @@ def confirm_patient_registration(patient):
 	if frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"):
 		registration_invoice = _raise_registration_invoice(patient_doc)
 
+	# No fee actually got invoiced (collection is off entirely, or on
+	# but nothing's configured to invoice) - registration is complete
+	# right now, there's no cashier payment step to wait for. A
+	# fee-owing patient gets this later instead, from
+	# _enable_patient_after_registration_payment() once actually paid -
+	# see _send_registration_email()'s docstring.
+	#
+	# Note: this only covers the email - native Patient.after_insert()/
+	# invoice_patient_registration() (healthcare/doctype/patient/patient.py)
+	# send the registration SMS themselves, at their own (earlier) timing:
+	# on raw insert when no fee is collected, or the moment the invoice
+	# is raised when one is. That's real native behaviour, not a bug in
+	# this file - patient.py is intentionally left untouched.
+	if not registration_invoice:
+		_send_registration_email(patient_doc)
+
 	return {
 		"status": "Success",
 		"patient": patient_doc.name,
@@ -374,10 +453,26 @@ def cancel_patient_registration(patient):
 	out instead of confirming. Safe to hard-delete here because this
 	only ever runs before confirm_patient_registration() has had a
 	chance to create a Customer or raise any invoice against the
-	patient - nothing else links to the record yet."""
+	patient - nothing meaningful links to the record yet, except one
+	thing: Patient.on_update() (healthcare/doctype/patient/patient.py)
+	unconditionally auto-creates a Contact linked to the Patient on
+	every insert whenever email/mobile/phone is set - which, since New
+	Patient made Email and Mobile required, now means every walk-in
+	registration. Frappe's own link-integrity check then refuses to
+	delete a Patient that Contact still points at, so that has to go
+	first - it was only ever created moments ago for this
+	still-unconfirmed draft, nothing else could have referenced it."""
 
 	if frappe.db.exists("Sales Invoice Item", {"reference_dt": "Patient", "reference_dn": patient}):
 		frappe.throw(_("This patient already has an invoice raised and can no longer be discarded."))
+
+	contact_name = frappe.db.get_value(
+		"Dynamic Link",
+		{"link_doctype": "Patient", "link_name": patient, "parenttype": "Contact"},
+		"parent",
+	)
+	if contact_name:
+		frappe.delete_doc("Contact", contact_name, ignore_permissions=True, force=True)
 
 	frappe.delete_doc("Patient", patient, ignore_permissions=True)
 
@@ -392,7 +487,7 @@ def _raise_registration_invoice(patient):
 	Patient.invoice_patient_registration() already does the fee/item
 	lookup and de-dupes against an existing draft invoice for this
 	patient, but it leaves the invoice in draft (docstatus=0) - submit
-	it here ourselves, same as _create_consultation_invoice() does for
+	it here ourselves, same as _invoice_consultation() does for
 	consultation fees below.
 	"""
 
@@ -736,10 +831,12 @@ def _check_in(appt, consultation_fee):
 def _finalize_checkin(appt, patient, consultation_fee):
 
 	invoice_name = None
+	covered_by_free_followup = False
 
 	if float(consultation_fee or 0) > 0:
-		invoice_name = _create_consultation_invoice(patient, consultation_fee, appt.name)
-		appt.db_set("consultation_invoice", invoice_name)
+		invoice_name, covered_by_free_followup = _invoice_consultation(appt, consultation_fee)
+
+	if invoice_name:
 		appt.db_set("queue_status", "Payment Pending")
 		_notify("queue_update", {
 			"department": "cashier",
@@ -754,7 +851,11 @@ def _finalize_checkin(appt, patient, consultation_fee):
 		# next manual tab switch/refresh.
 		_notify("queue_update", {
 			"department": "queue",
-			"message": f"{appt.name} checked in - no fee due",
+			"message": (
+				f"{appt.name} checked in - free follow-up"
+				if covered_by_free_followup
+				else f"{appt.name} checked in - no fee due"
+			),
 			"encounter": None,
 		})
 
@@ -766,83 +867,105 @@ def _finalize_checkin(appt, patient, consultation_fee):
 	}
 
 
-def _resolve_consultation_service_item(appointment_name):
-	"""Which Item actually goes on the consultation invoice line - prefer
-	whatever the native billing config resolves for this appointment
-	(practitioner's own OP Consulting Charge Item, then the appointment
-	type's, then Healthcare Settings' Out Patient Consulting Charge Item
-	default), same chain get_consultation_fee() prices against. Only
-	falls back to the "Consultation" placeholder item if none of that is
-	configured - invoice creation shouldn't hard-fail on a billing config
-	gap the way native flows do; check-in already collected/confirmed a
-	fee amount by this point regardless of whether an Item was found."""
+def _invoice_consultation(appt, consultation_fee):
+	"""Raise the consultation Sales Invoice for a checked-in appointment,
+	submitted but UNPAID (outstanding_amount == grand_total) - the
+	Cashier Portal is responsible for actually receiving payment against
+	it, same as Pharmacy/Lab/Rehab invoices - or skip invoicing entirely
+	when an active Fee Validity window (Healthcare Settings' "Enable
+	Free Follow-ups") already covers this visit for free.
 
-	appt = frappe.get_doc("Patient Appointment", appointment_name)
+	Reuses native Healthcare's own invoicing/free-follow-up machinery
+	(patient_appointment.py's create_sales_invoice(), fee_validity.py's
+	check_fee_validity()/update_fee_validity()) rather than a second,
+	parallel invoice-creation path that duplicated it (this used to
+	build its own Sales Invoice by hand here).
 
-	billing_detail = _get_billing_detail_or_none(appt)
-	if billing_detail and billing_detail.get("service_item"):
-		return billing_detail["service_item"]
+	Deliberately does NOT go through native's own invoice_appointment()
+	wrapper - that function's decision whether to invoice AT ALL is
+	gated on Healthcare Settings' "Show Payment Prompt in Appointment"
+	(show_payment_popup), which is about whether a payment dialog pops
+	up on the standard desk form, not about whether Front Desk should
+	charge for a consultation. Front Desk's own trigger for invoicing
+	stays exactly what it's always been - whether `consultation_fee`
+	(confirmed/editable by the operator at check-in) is greater than
+	zero - independent of that setting, so leaving that dialog off
+	elsewhere in the app can't silently stop Front Desk from billing.
 
-	# Same department-gap workaround as get_consultation_fee() above -
-	# read Appointment Type's own Billing table directly, since the
-	# utils.py helper skips it entirely when the appointment has no
-	# department set.
-	if appt.appointment_type:
-		row = get_appointment_type_billing_row(appt.appointment_type, appt.department)
-		if row and row.get("op_consulting_charge_item"):
-			return row["op_consulting_charge_item"]
-
-	return "Consultation"
-
-
-def _create_consultation_invoice(patient, amount, appointment_name):
-	"""Create the consultation Sales Invoice, submitted but UNPAID —
-	outstanding_amount == grand_total. The Cashier Portal is responsible
-	for actually receiving payment against this invoice (via whatever
-	mechanism cashier_portal.py already uses for Pharmacy/Lab/Rehab
-	invoices — Payment Entry, or its own accept/confirm method).
-
-	custom_department = "Consultation" tags this invoice the same way
-	Pharmacy/Spa invoices are tagged (see setup.py's get_custom_fields()),
-	so it's correctly bucketed rather than falling into "Other"
-	unlabelled - Cashier Portal doesn't have a dedicated Consultation tab
-	today, but tagging it correctly here means one can be added later
-	without a data migration.
-
-	The invoice line's rate is whatever was actually confirmed/typed at
-	check-in (`amount`) - not re-derived here - since front desk may have
-	overridden the auto-filled suggestion; only the Item itself is looked
-	up fresh, via _resolve_consultation_service_item().
+	Returns (invoice_name, covered_by_free_followup) - invoice_name is
+	None when a Fee Validity window covered this visit instead.
 	"""
 
-	patient_doc = frappe.get_doc("Patient", patient)
-	customer = patient_doc.customer or patient_doc.name
+	from healthcare.healthcare.doctype.patient_appointment.patient_appointment import (
+		create_sales_invoice,
+	)
+	from healthcare.healthcare.doctype.fee_validity.fee_validity import (
+		check_fee_validity,
+		update_fee_validity,
+	)
 
-	default_company = frappe.defaults.get_global_default("company")
+	# Operator's confirmed/edited fee wins over whatever
+	# Patient Appointment.set_payment_details() auto-suggested at
+	# insert time (native's own after_insert(), when "Show Payment
+	# Prompt in Appointment" is on) - create_sales_invoice()'s own
+	# get_appointment_item() prefers appt.paid_amount over the billing
+	# config's practitioner_charge whenever it's set.
+	appt.db_set("paid_amount", consultation_fee)
 
-	invoice = frappe.get_doc({
-		"doctype": "Sales Invoice",
+	# create_sales_invoice() reads appointment_doc.company directly
+	# (both for the invoice itself and for its receivable-account
+	# lookup) - none of Front Desk's own appointment-creation code sets
+	# it explicitly (see create_consultation()/create_walkin_checkin()
+	# above), instead relying on Frappe's own insert-time default. The
+	# previous hand-rolled invoice here never trusted that either -  it
+	# always fetched the global default company independently - so
+	# match that same guarantee rather than assume it landed here.
+	if not appt.company:
+		appt.db_set("company", frappe.defaults.get_global_default("company"))
 
-		"customer": customer,
-		"patient": patient,
-		"company": default_company,
-		"posting_date": nowdate(),
-		"due_date": nowdate(),
-		"custom_department": "Consultation",
+	fee_validity = check_fee_validity(appt)
+	if fee_validity and fee_validity.status != "Active":
+		fee_validity = None
 
-		"items": [{
-			"item_code": _resolve_consultation_service_item(appointment_name),
-			"qty": 1,
-			"rate": float(amount),
-		}],
+	if fee_validity:
+		# Already covered - record/advance the visit against the
+		# existing window (increments `visited`, links this
+		# appointment into ref_appointments) instead of invoicing.
+		update_fee_validity(appt)
+		return None, True
 
-		"remarks": f"Consultation fee for Patient Appointment {appointment_name}",
-	})
+	# create_sales_invoice() ends with its own alert-style msgprint
+	# ("Sales Invoice X created") - trimmed the same way
+	# _get_billing_detail_or_none() above trims a frappe.throw(), since
+	# Front Desk already raises its own "Checked in" toast for this and
+	# a second one would just be confusing/duplicated.
+	log_len = len(frappe.local.message_log)
+	create_sales_invoice(appt)
+	del frappe.local.message_log[log_len:]
 
-	invoice.insert(ignore_permissions=True)
-	invoice.submit()
+	# create_sales_invoice() writes invoiced/ref_sales_invoice/paid_amount
+	# straight to the database (frappe.db.set_value(), not appt.db_set()),
+	# so they never land on this in-memory `appt` object - read the
+	# invoice name back rather than trusting appt.ref_sales_invoice.
+	invoice_name = frappe.db.get_value("Patient Appointment", appt.name, "ref_sales_invoice")
 
-	return invoice.name
+	# create_sales_invoice() tags neither Front Desk's own
+	# `consultation_invoice` field (which the rest of this file - the
+	# queue, on_payment_entry_submit() below - reads) nor Cashier
+	# Portal's `custom_department` bucketing field (setup.py). It hands
+	# back an already-submitted invoice, so custom_department needs a
+	# direct db write rather than a normal save (submitted docs reject
+	# plain field edits).
+	appt.db_set("consultation_invoice", invoice_name)
+	frappe.db.set_value("Sales Invoice", invoice_name, "custom_department", "Consultation")
+
+	# First paid visit for this patient/practitioner combo establishes a
+	# fresh free-follow-up window (when the feature's enabled), so a
+	# later visit within it hits the fee_validity branch above instead
+	# of being charged again.
+	update_fee_validity(appt)
+
+	return invoice_name, False
 
 def on_payment_entry_submit(doc, method=None):
 	"""Doc event hook (wire up in hooks.py against Payment Entry's
@@ -919,6 +1042,58 @@ def _enable_patient_after_registration_payment(invoice_name):
 		"message": f"Registration fee paid — {patient_name} is now enabled for check-in",
 		"encounter": None,
 	})
+
+	# Registration is only genuinely complete once the fee actually owed
+	# is paid, not merely invoiced - see _send_registration_email()'s
+	# docstring for the other half of this (patients who owe no fee at all).
+	_send_registration_email(frappe.get_doc("Patient", patient_name))
+
+
+def _send_registration_email(patient_doc):
+	"""Email confirming a completed registration, sent from two places
+	depending on whether this patient owes a registration fee:
+
+	- confirm_patient_registration(), immediately, for a patient who
+	  owes no fee at all (nothing further to wait for).
+	- _enable_patient_after_registration_payment() above, once a fee
+	  that WAS owed has actually been paid in full - not merely invoiced.
+
+	Native Healthcare's "Out Patient SMS Alerts" (Healthcare Settings)
+	only ever sends SMS, and does so itself at its own (earlier) timing -
+	Patient.after_insert() on raw insert when no fee is collected, or
+	Patient.invoice_patient_registration() the moment the invoice is
+	raised when one is (see healthcare/doctype/patient/patient.py,
+	intentionally left untouched). There's no built-in email equivalent,
+	so this fills that gap, correctly timed to when registration is
+	actually done - reusing the exact same "Patient Registration" toggle
+	and Registration Message template that SMS uses, so one message is
+	maintained in one place for both channels, even though they now fire
+	at different points in the flow.
+
+	Only fires once both an email and mobile number are on file - Front
+	Desk's New Patient form makes both required, but this is a second,
+	server-side check in case this patient predates that (or was
+	created some other way).
+	"""
+
+	if not patient_doc.email or not patient_doc.mobile:
+		return
+
+	if not frappe.db.get_single_value("Healthcare Settings", "send_registration_msg"):
+		return
+
+	message = frappe.db.get_single_value("Healthcare Settings", "registration_msg")
+	if not message:
+		return
+
+	rendered = frappe.render_template(message, {"doc": patient_doc, "alert": patient_doc})
+
+	frappe.sendmail(
+		recipients=[patient_doc.email],
+		subject=_("Registration Confirmation"),
+		message=rendered,
+	)
+
 
 # =============================================
 # QUEUE (reads Patient Appointment, filtered to
