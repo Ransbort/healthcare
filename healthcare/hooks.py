@@ -163,7 +163,10 @@ doc_events = {
 	"Patient": {"after_insert": "healthcare.regional.india.abdm.utils.set_consent_attachment_details"},
 	"Patient Encounter": {
 		"on_submit": "healthcare.healthcare.page.front_desk.front_desk.on_patient_encounter_submit",
-		"on_update": "healthcare.healthcare.page.lab_portal.lab_portal.notify_new_lab_requests"
+		"on_update": [
+			"healthcare.healthcare.page.lab_portal.lab_portal.notify_new_lab_requests",
+			"healthcare.healthcare.page.rehab_portal.rehab_portal.notify_new_therapy_requests",
+		]
 	},
 	"Payment Entry": {
 		"on_submit": [

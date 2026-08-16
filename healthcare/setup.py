@@ -2049,6 +2049,24 @@ def get_custom_fields():
 				"reqd": 0,
 				"hidden": 0,
 			},
+			# Distinguishes encounter-sourced Therapy Plans (created by
+			# accept_therapy_request(), stamped with the originating
+			# Patient Encounter) from direct-sourced ones (created by
+			# create_therapy_request(), left blank) - same role Lab Test's
+			# native `prescription` field plays for Lab Portal, but Therapy
+			# Plan has no equivalent native backlink, so this is a new
+			# dedicated field instead of reusing the generic
+			# source_doc/order_group pair (unclear/possibly-colliding
+			# native semantics - see rehab_portal.py module docstring).
+			{
+				"fieldname": "custom_source_encounter",
+				"label": "Source Encounter",
+				"fieldtype": "Link",
+				"insert_after": "custom_invoice",
+				"options": "Patient Encounter",
+				"reqd": 0,
+				"hidden": 0,
+			},
 		],
 		# Rehab Portal: same pattern as Lab Prescription, for therapies.
 		"Therapy Plan Detail": [

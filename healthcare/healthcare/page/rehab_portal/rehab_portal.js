@@ -5,6 +5,44 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         single_column: true
     });
 
+	// =============================================
+	// REALTIME SOUND NOTIFICATIONS
+	// =============================================
+	const notificationSound = new Audio('/assets/healthcare/sounds/notify.mp3');
+
+	let audioUnlocked = false;
+	function unlockAudio() {
+	    if (audioUnlocked) return;
+	    notificationSound.play().then(() => {
+	        notificationSound.pause();
+	        notificationSound.currentTime = 0;
+	        audioUnlocked = true;
+	    }).catch(() => {});
+	}
+	document.addEventListener('click', unlockAudio, { once: true });
+	document.addEventListener('keydown', unlockAudio, { once: true });
+
+	function playNotification() {
+	    try {
+	        notificationSound.currentTime = 0;
+	        notificationSound.play().catch(() => {});
+	    } catch (e) {
+	        console.warn('Notification sound error:', e);
+	    }
+	}
+
+	frappe.realtime.on('queue_update', function(data) {
+	    if (data.department !== 'rehabilitation') return;
+
+	    playNotification();
+	    frappe.show_alert({
+	        message: data.message,
+	        indicator: 'blue'
+	    }, 6);
+
+	    loadTherapies();
+	});
+
     const style = `
         <style>
             .rehab-wrapper {
@@ -18,30 +56,114 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 top: 0;
                 z-index: 100;
                 background: white;
-                padding-bottom: 20px;
+                padding-bottom: 16px;
                 margin-bottom: 20px;
             }
 
-            .search-section {
+            /* --- Toolbar: title + actions --- */
+            .rehab-toolbar {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding-bottom: 16px;
+                margin-bottom: 16px;
+                border-bottom: 1px solid #e9ecef;
+            }
+
+            .rehab-toolbar-title {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+
+            .rehab-toolbar-title .icon-badge {
+                width: 40px;
+                height: 40px;
+                border-radius: 10px;
+                background: #f0f1fe;
+                color: var(--primary-color);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 17px;
+                flex-shrink: 0;
+            }
+
+            .rehab-toolbar-title h4 {
+                margin: 0;
+                font-size: 1.2rem;
+                font-weight: 700;
+                color: #1a1a2e;
+                line-height: 1.3;
+            }
+
+            .rehab-toolbar-title .rehab-toolbar-subtitle {
+                font-size: 0.83rem;
+                color: #868e96;
+                margin-top: 1px;
+            }
+
+            .rehab-toolbar-actions {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .btn-icon {
+                width: 38px;
+                height: 38px;
+                border-radius: 8px;
+                border: 1px solid #dee2e6;
+                background: white;
+                color: #495057;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                font-size: 0.95rem;
+            }
+
+            .btn-icon:hover {
+                background: #f8f9fa;
+                border-color: var(--primary-color);
+                color: var(--primary-color);
+            }
+
+            .btn-new-request {
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                padding: 25px;
-                border-radius: 12px;
-                margin-bottom: 20px;
-                color: white;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                color: white !important;
+                border: none;
+                padding: 9px 18px;
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 0.88rem;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                transition: opacity 0.15s ease;
             }
 
-            .search-section h4 {
+            .btn-new-request:hover {
+                opacity: 0.9;
                 color: white;
-                margin-bottom: 15px;
-                font-weight: 600;
-                font-size: 1.1rem;
+            }
+
+            /* --- Filter card --- */
+            .rehab-wrapper .search-section {
+                background: #ffffff !important;
+                background-image: none !important;
+                border: 1px solid #e9ecef;
+                border-radius: 12px;
+                padding: 20px 20px 14px;
+                margin-bottom: 4px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
             }
 
             .search-input-group {
                 display: grid;
                 grid-template-columns: 1fr 1fr 1fr auto auto;
-                gap: 15px;
+                gap: 14px;
                 align-items: end;
             }
 
@@ -53,19 +175,44 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 margin-bottom: 0;
             }
 
-            .search-input-group label {
-                color: white !important;
+            .rehab-wrapper .search-input-group label {
+                color: #495057 !important;
                 font-weight: 500;
+                font-size: 0.83rem;
             }
 
-            .btn-clear {
-                background: rgba(255, 255, 255, 0.2) !important;
-                color: white !important;
-                border: 1px solid rgba(255, 255, 255, 0.3) !important;
+            .search-input-group .form-control {
+                border-radius: 8px;
+                border: 1px solid #dee2e6;
             }
 
-            .btn-clear:hover {
-                background: rgba(255, 255, 255, 0.3) !important;
+            #search-btn {
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 18px;
+            }
+
+            #clear-btn {
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 16px;
+                background: transparent;
+                border: 1px solid #dee2e6;
+                color: #495057;
+            }
+
+            #clear-btn:hover {
+                background: #f8f9fa;
+            }
+
+            /* --- Last updated --- */
+            .rehab-wrapper .last-updated {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 0.78rem;
+                color: #adb5bd !important;
+                padding: 10px 2px 2px;
             }
 
             .tabs-section {
@@ -384,6 +531,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             }
 
             .empty-state {
+                grid-column: 1 / -1;
                 text-align: center;
                 padding: 60px 20px;
                 color: #6c757d;
@@ -409,6 +557,17 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             @media (max-width: 768px) {
                 .rehab-wrapper {
                     padding: 15px;
+                }
+
+                .rehab-toolbar {
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 12px;
+                }
+
+                .rehab-toolbar-actions {
+                    width: 100%;
+                    justify-content: flex-end;
                 }
 
                 .search-input-group {
@@ -441,18 +600,39 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     let html = `
         <div class="rehab-wrapper">
             <div class="sticky-header">
+                <div class="rehab-toolbar">
+                    <div class="rehab-toolbar-title">
+                        <div class="icon-badge"><i class="fa fa-heartbeat"></i></div>
+                        <div>
+                            <h4>Rehabilitation Portal</h4>
+                            <div class="rehab-toolbar-subtitle">Search and manage therapy requests</div>
+                        </div>
+                    </div>
+                    <div class="rehab-toolbar-actions">
+                        <button class="btn-icon" id="refresh-btn" title="Refresh">
+                            <i class="fa fa-refresh"></i>
+                        </button>
+                        <button class="btn-new-request" id="new-therapy-request-btn">
+                            <i class="fa fa-plus"></i> New Therapy Request
+                        </button>
+                    </div>
+                </div>
+
                 <div class="search-section">
-                    <h4><i class="fa fa-heartbeat"></i> Rehabilitation Search</h4>
                     <div class="search-input-group">
                         <div class="frappe-control" data-fieldname="search_patient"></div>
                         <div class="frappe-control" data-fieldname="search_date"></div>
                         <div class="frappe-control" data-fieldname="search_encounter"></div>
-                        <button class="btn btn-primary btn-lg" id="search-btn" style="background: white; color: #667eea; border: none; font-weight: 600;">
+                        <button class="btn btn-primary" id="search-btn">
                             <i class="fa fa-search"></i> Search
                         </button>
-                        <button class="btn btn-clear btn-lg" id="clear-btn">
-                            <i class="fa fa-refresh"></i> Refresh
+                        <button class="btn" id="clear-btn">
+                            Clear
                         </button>
+                    </div>
+                    <div class="last-updated">
+                        <i class="fa fa-clock-o"></i>
+                        <span id="last-updated-time">Not loaded yet</span>
                     </div>
                 </div>
 
@@ -514,6 +694,20 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     // Current view mode (card or list)
     let currentView = 'card';
 
+    // Tracks how many of the 3 parallel loads (requested/pending/completed)
+    // are still in flight, so the "Last updated" timestamp only refreshes
+    // once everything currently on screen is current.
+    let pendingLoads = 0;
+
+    function markLoadDone() {
+        pendingLoads = Math.max(0, pendingLoads - 1);
+        if (pendingLoads === 0) {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            page.main.find('#last-updated-time').text(`Updated at ${timeStr}`);
+        }
+    }
+
     let search_patient_field = frappe.ui.form.make_control({
         parent: page.main.find('[data-fieldname="search_patient"]'),
         df: {
@@ -563,22 +757,22 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             get_query: function() {
                 let patient_id = search_patient_field.get_value();
                 let date = search_date_field.get_value();
-                
+
                 let filters = { 'docstatus': ['in', [0, 1]] };
-                
+
                 if (!patient_id && !date) {
                     filters['name'] = ['=', ''];
                     return { filters: filters };
                 }
-                
+
                 if (patient_id) {
                     filters['patient'] = patient_id;
                 }
-                
+
                 if (date) {
                     filters['encounter_date'] = date;
                 }
-                
+
                 return { filters: filters };
             }
         },
@@ -590,23 +784,26 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         df: {
             fieldtype: 'Date',
             fieldname: 'completed_date',
-            label: 'Filter by Date (Optional)'
+            label: 'Filter by Date',
+            default: frappe.datetime.get_today()
         },
         render_input: true
     });
 
+    completed_date_field.set_value(frappe.datetime.get_today());
+
     function updateEncounterFilter(patient_id, date) {
         search_encounter_field.df.get_query = function() {
             let filters = { 'docstatus': ['in', [0, 1]] };
-            
+
             if (patient_id) {
                 filters['patient'] = patient_id;
             }
-            
+
             if (date) {
                 filters['encounter_date'] = date;
             }
-            
+
             return { filters: filters };
         };
         search_encounter_field.refresh();
@@ -616,10 +813,10 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     page.main.find('.view-toggle-btn').on('click', function() {
         const view = $(this).data('view');
         currentView = view;
-        
+
         page.main.find('.view-toggle-btn').removeClass('active');
         $(this).addClass('active');
-        
+
         // Refresh current tab display
         const activeTab = page.main.find('.tab-btn.active').data('tab');
         if (activeTab === 'requested') {
@@ -650,6 +847,15 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         loadTherapies();
     });
 
+    // Toolbar refresh icon: reloads with current filters, gives a quick
+    // spin for feedback (distinct from "Clear", which also resets filters).
+    page.main.find('#refresh-btn').on('click', function() {
+        const $icon = $(this).find('i');
+        $icon.addClass('fa-spin');
+        loadTherapies();
+        setTimeout(() => $icon.removeClass('fa-spin'), 600);
+    });
+
     page.main.find('#filter-completed-btn').on('click', function() {
         loadCompletedTherapies(
             search_patient_field.get_value(),
@@ -658,14 +864,107 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         );
     });
 
+    page.main.find('#new-therapy-request-btn').on('click', function() {
+        openNewTherapyRequestDialog();
+    });
+
+    // Direct therapy requests: no Patient Encounter involved. Creates a
+    // standalone invoiced Therapy Plan via create_therapy_request(), which
+    // then shows up in the Pending tab directly (see rehab_portal.py's
+    // create_therapy_request docstring - same immediate-invoice pattern
+    // as Lab Portal's direct requests). Unlike Lab Portal's dialog, a
+    // Practitioner is required here since Therapy Plan.practitioner is
+    // mandatory and there's no encounter to source it from.
+    function openNewTherapyRequestDialog() {
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_therapy_types',
+            callback: function(r) {
+                const types = r.message || [];
+
+                const dialog = new frappe.ui.Dialog({
+                    title: __('New Therapy Request'),
+                    fields: [
+                        {
+                            fieldtype: 'Link',
+                            fieldname: 'patient',
+                            options: 'Patient',
+                            label: 'Patient',
+                            reqd: 1
+                        },
+                        {
+                            fieldtype: 'Link',
+                            fieldname: 'practitioner',
+                            options: 'Healthcare Practitioner',
+                            label: 'Practitioner',
+                            reqd: 1
+                        },
+                        {
+                            fieldtype: 'Column Break'
+                        },
+                        {
+                            fieldtype: 'Select',
+                            fieldname: 'therapy_type',
+                            label: 'Therapy Type',
+                            options: types.map(t => ({
+                                label: `${t.name} (${format_currency(t.rate)})`,
+                                value: t.name
+                            })),
+                            reqd: 1
+                        },
+                        {
+                            fieldtype: 'Int',
+                            fieldname: 'no_of_sessions',
+                            label: 'No of Sessions',
+                            default: 1,
+                            reqd: 1
+                        }
+                    ],
+                    primary_action_label: __('Create Request'),
+                    primary_action: function(values) {
+                        frappe.call({
+                            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.create_therapy_request',
+                            args: {
+                                patient: values.patient,
+                                therapy_type: values.therapy_type,
+                                no_of_sessions: values.no_of_sessions || 1,
+                                practitioner: values.practitioner
+                            },
+                            freeze: true,
+                            freeze_message: __('Creating therapy request...'),
+                            callback: function(r) {
+                                if (r.message && r.message.status === 'Success') {
+                                    frappe.show_alert({
+                                        message: __('Therapy request created.'),
+                                        indicator: 'green'
+                                    }, 6);
+                                    dialog.hide();
+                                    loadTherapies();
+                                }
+                            },
+                            error: function(r) {
+                                frappe.show_alert({
+                                    message: r.message || __('Error creating therapy request'),
+                                    indicator: 'red'
+                                }, 10);
+                            }
+                        });
+                    }
+                });
+
+                dialog.show();
+            }
+        });
+    }
+
     function loadTherapies() {
         const patient = search_patient_field.get_value();
         const encounter = search_encounter_field.get_value();
         const date = search_date_field.get_value();
-        
+
+        pendingLoads = 3;
         loadRequestedTherapies(patient, encounter, date);
         loadPendingTherapies(patient, encounter, date);
-        loadCompletedTherapies(patient, encounter, null); // Load all completed, no date filter
+        loadCompletedTherapies(patient, encounter, completed_date_field.get_value());
     }
 
     function loadRequestedTherapies(patient, encounter, date) {
@@ -680,6 +979,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 const therapies = r.message || [];
                 window.lastRequestedTherapies = therapies;
                 displayRequestedTherapies(therapies);
+                markLoadDone();
             }
         });
     }
@@ -698,6 +998,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 const therapies = r.message || [];
                 window.lastPendingTherapies = therapies;
                 displayPendingTherapies(therapies);
+                markLoadDone();
             }
         });
     }
@@ -714,6 +1015,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 const therapies = r.message || [];
                 window.lastCompletedTherapies = therapies;
                 displayCompletedTherapies(therapies);
+                markLoadDone();
             }
         });
     }
@@ -721,7 +1023,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     function displayRequestedTherapies(therapies) {
         const cardContainer = page.main.find('#requested-rehab-container');
         const listContainer = page.main.find('#requested-rehab-list');
-        
+
         cardContainer.empty();
         listContainer.empty();
 
@@ -753,9 +1055,9 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
 
     function renderRequestedTherapyCards(therapies, container) {
         therapies.forEach(function(therapy) {
-            const priorityClass = therapy.priority === 'High' ? 'priority-high' : 
+            const priorityClass = therapy.priority === 'High' ? 'priority-high' :
                                  therapy.priority === 'Medium' ? 'priority-medium' : 'priority-low';
-            
+
             const card = $(`
                 <div class="rehab-card">
                     <div class="rehab-card-header">
@@ -839,10 +1141,10 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 <tbody>
         `;
 
-        therapies.forEach(function(therapy) {
-            const priorityClass = therapy.priority === 'High' ? 'priority-high' : 
+        therapies.forEach(function(therapy, index) {
+            const priorityClass = therapy.priority === 'High' ? 'priority-high' :
                                  therapy.priority === 'Medium' ? 'priority-medium' : 'priority-low';
-            
+
             tableHtml += `
                 <tr>
                     <td><strong>${therapy.therapy_type || '-'}</strong><br><small>Sessions: ${therapy.no_of_sessions || 'N/A'}</small></td>
@@ -853,7 +1155,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                     <td>${therapy.priority ? `<span class="priority-badge ${priorityClass}">${therapy.priority}</span>` : '-'}</td>
                     <td>
                         <div class="rehab-list-actions">
-                            <button class="btn btn-success btn-sm btn-accept-therapy" data-therapy-id="${therapy.therapy_id}">
+                            <button class="btn btn-success btn-sm btn-accept-therapy" data-idx="${index}">
                                 <i class="fa fa-check"></i> Accept
                             </button>
                         </div>
@@ -869,10 +1171,14 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
 
         container.html(tableHtml);
 
+        // Keyed by row index, not therapy.therapy_id - direct-sourced rows
+        // (see rehab_portal.py get_requested_therapies) all have
+        // therapy_id null, which would collide if looked up by that field
+        // whenever more than one direct request is showing at once.
         container.find('.btn-accept-therapy').on('click', function(e) {
             e.stopPropagation();
-            const therapyId = $(this).data('therapy-id');
-            const therapy = therapies.find(t => t.therapy_id === therapyId);
+            const idx = $(this).data('idx');
+            const therapy = therapies[idx];
             if (therapy) {
                 acceptTherapyRequest(therapy);
             }
@@ -882,7 +1188,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     function displayPendingTherapies(therapies) {
         const cardContainer = page.main.find('#pending-rehab-container');
         const listContainer = page.main.find('#pending-rehab-list');
-        
+
         cardContainer.empty();
         listContainer.empty();
 
@@ -914,13 +1220,13 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
 
     function renderPendingTherapyCards(therapies, container) {
         therapies.forEach(function(therapy) {
-            const priorityClass = therapy.priority === 'High' ? 'priority-high' : 
+            const priorityClass = therapy.priority === 'High' ? 'priority-high' :
                                  therapy.priority === 'Medium' ? 'priority-medium' : 'priority-low';
-            
+
             const isPaid = therapy.payment_status === 'Paid';
             const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
             const paymentBadgeIcon = isPaid ? 'fa-check-circle' : 'fa-clock-o';
-            
+
             const card = $(`
                 <div class="rehab-card" style="${!isPaid ? 'opacity: 0.8;' : ''}">
                     <div class="rehab-card-header">
@@ -1017,11 +1323,11 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         `;
 
         therapies.forEach(function(therapy) {
-            const priorityClass = therapy.priority === 'High' ? 'priority-high' : 
+            const priorityClass = therapy.priority === 'High' ? 'priority-high' :
                                  therapy.priority === 'Medium' ? 'priority-medium' : 'priority-low';
             const isPaid = therapy.payment_status === 'Paid';
             const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
-            
+
             tableHtml += `
                 <tr style="${!isPaid ? 'opacity: 0.8;' : ''}">
                     <td><strong>${therapy.therapy_type || '-'}</strong><br><small>Sessions: ${therapy.no_of_sessions || 'N/A'}</small></td>
@@ -1068,7 +1374,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     function displayCompletedTherapies(therapies) {
         const cardContainer = page.main.find('#completed-rehab-container');
         const listContainer = page.main.find('#completed-rehab-list');
-        
+
         cardContainer.empty();
         listContainer.empty();
 
@@ -1238,12 +1544,12 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             },
             callback: function(r) {
                 const print_formats = r.message || [];
-                
+
                 if (print_formats.length === 0) {
                     frappe.utils.print('Therapy Plan', therapy_plan_name);
                     return;
                 }
-                
+
                 const dialog = new frappe.ui.Dialog({
                     title: __('Select Print Format'),
                     fields: [
@@ -1295,23 +1601,34 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     }
 
     function acceptTherapyRequest(therapy) {
+        // Direct-sourced rows (no Patient Encounter behind them - see
+        // create_therapy_request() in rehab_portal.py) are invoiced
+        // immediately on creation now, so they normally skip Requested
+        // Therapies entirely. Left in place as a fallback for any direct
+        // Therapy Plan that ends up uninvoiced.
+        const isDirect = therapy.source === 'direct';
+
         frappe.confirm(
             __('Accept this therapy request and create invoice for {0}?', [therapy.patient_name]),
             function() {
                 frappe.call({
-                    method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.accept_therapy_request',
-                    args: {
-                        therapy_id: therapy.therapy_id,
-                        patient_id: therapy.patient,
-                        encounter_id: therapy.encounter_id,
-                        therapy_type: therapy.therapy_type
-                    },
+                    method: isDirect
+                        ? 'healthcare.healthcare.page.rehab_portal.rehab_portal.accept_direct_therapy_request'
+                        : 'healthcare.healthcare.page.rehab_portal.rehab_portal.accept_therapy_request',
+                    args: isDirect
+                        ? { therapy_plan_name: therapy.therapy_plan_name }
+                        : {
+                              therapy_id: therapy.therapy_id,
+                              patient_id: therapy.patient,
+                              encounter_id: therapy.encounter_id,
+                              therapy_type: therapy.therapy_type
+                          },
                     freeze: true,
-                    freeze_message: __('Creating invoice and therapy plan...'),
+                    freeze_message: __('Creating invoice...'),
                     callback: function(r) {
                         if (r.message && r.message.status === 'Success') {
                             frappe.show_alert({
-                                message: __('Therapy request accepted! Invoice {0} and Therapy Plan {1} created. Patient needs to pay before therapy can begin.', 
+                                message: __('Therapy request accepted! Invoice {0} and Therapy Plan {1} created. Patient needs to pay before therapy can begin.',
                                     [r.message.invoice_name, r.message.therapy_plan_name]),
                                 indicator: 'green'
                             }, 10);
@@ -1332,5 +1649,4 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
 
     loadTherapies();
 };
-
 //# sourceURL=rehab_portal.js

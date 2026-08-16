@@ -876,8 +876,8 @@ def _invoice_consultation(appt, consultation_fee):
 	Free Follow-ups") already covers this visit for free.
 
 	Reuses native Healthcare's own invoicing/free-follow-up machinery
-	(patient_appointment.py's create_sales_invoice(), fee_validity.py's
-	check_fee_validity()/update_fee_validity()) rather than a second,
+	(patient_appointment.py's create_sales_invoice()/update_fee_validity(),
+	fee_validity.py's check_fee_validity()) rather than a second,
 	parallel invoice-creation path that duplicated it (this used to
 	build its own Sales Invoice by hand here).
 
@@ -898,10 +898,10 @@ def _invoice_consultation(appt, consultation_fee):
 
 	from healthcare.healthcare.doctype.patient_appointment.patient_appointment import (
 		create_sales_invoice,
+		update_fee_validity,
 	)
 	from healthcare.healthcare.doctype.fee_validity.fee_validity import (
 		check_fee_validity,
-		update_fee_validity,
 	)
 
 	# Operator's confirmed/edited fee wins over whatever
