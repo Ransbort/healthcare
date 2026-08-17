@@ -1130,6 +1130,7 @@ function loadQueue() {
 				<tr>
 					<td>${row.encounter_time || ''}</td>
 					<td>${row.patient_name || ''}</td>
+					<td>${row.appointment_type || '-'}</td>
 					<td>${row.practitioner_name || row.practitioner || ''}</td>
 					<td>${statusBadge(row.queue_status)}</td>
 					<td>${row.consultation_invoice || '-'}</td>
@@ -1139,7 +1140,7 @@ function loadQueue() {
 		});
 		container.html(`
 			<table class="queue-table">
-				<thead><tr><th>${__('Time')}</th><th>${__('Patient')}</th><th>${__('Practitioner')}</th><th>${__('Status')}</th><th>${__('Invoice')}</th><th></th></tr></thead>
+				<thead><tr><th>${__('Time')}</th><th>${__('Patient')}</th><th>${__('Appointment Type')}</th><th>${__('Practitioner')}</th><th>${__('Status')}</th><th>${__('Invoice')}</th><th></th></tr></thead>
 				<tbody>${body}</tbody>
 			</table>
 		`);

@@ -1138,6 +1138,8 @@ def get_queue(date=None, queue_status=None):
 			"patient",
 			"patient_name",
 
+			"appointment_type",
+
 			"practitioner",
 			"practitioner_name",
 
