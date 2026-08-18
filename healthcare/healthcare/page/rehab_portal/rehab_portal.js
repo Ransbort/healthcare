@@ -671,12 +671,13 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             }
 
             .sched-cal-day-header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
+                background: #f8f9fa;
+                color: #495057;
                 padding: 10px 5px;
                 text-align: center;
                 font-weight: 600;
                 font-size: 0.85rem;
+                border-bottom: 1px solid #d1d8dd;
             }
 
             .sched-cal-day {
