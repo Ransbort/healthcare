@@ -63,9 +63,11 @@ Schema notes:
 - Payment status is read off the linked Sales Invoice's `status` field.
 """
 
+import json
+
 import frappe
 from frappe import _
-from frappe.utils import cint, today
+from frappe.utils import cint, now_datetime, today
 
 
 def _notify(event, payload):
@@ -159,6 +161,7 @@ def _normalize_direct_row(row):
 		"therapy_plan_name": row.get("therapy_plan_name"),  # the Therapy Plan's own name - used to accept/view it
 		"therapy_type": row.get("therapy_type"),
 		"no_of_sessions": row.get("no_of_sessions"),
+		"sessions_completed": row.get("sessions_completed"),
 		"interval": None,
 		"priority": None,
 		"custom_therapy_plan": row.get("custom_therapy_plan"),
@@ -187,7 +190,38 @@ def get_therapy_types():
 
 
 @frappe.whitelist()
-def create_therapy_request(patient, therapy_type, no_of_sessions=1, practitioner=None):
+def get_therapy_plan_templates():
+	"""Therapy Plan Templates for the optional picker in 'New Therapy
+	Request' - each bundles one or more Therapy Types with a preset number
+	of sessions, so a therapist doesn't have to add them one at a time for
+	a routine protocol (e.g. "Post-Op Knee Protocol")."""
+	return frappe.get_all("Therapy Plan Template", fields=["name"], order_by="name asc")
+
+
+@frappe.whitelist()
+def get_therapy_plan_template_detail(therapy_plan_template):
+	"""Therapy type/session breakdown of a template, shown as a preview
+	before the therapist commits to it in the New Therapy Request dialog."""
+	template = frappe.get_doc("Therapy Plan Template", therapy_plan_template)
+	rows = []
+	for row in template.therapy_types:
+		item = frappe.db.get_value("Therapy Type", row.therapy_type, "item")
+		rate = frappe.db.get_value("Item Price", {"item_code": item}, "price_list_rate") or 0 if item else 0
+		rows.append(
+			{
+				"therapy_type": row.therapy_type,
+				"no_of_sessions": row.no_of_sessions,
+				"interval": row.interval,
+				"rate": rate,
+			}
+		)
+	return rows
+
+
+@frappe.whitelist()
+def create_therapy_request(
+	patient, therapy_type=None, no_of_sessions=1, practitioner=None, therapy_plan_template=None
+):
 	"""Create a Therapy Plan requested directly by a therapist, with no
 	Patient Encounter involved. Unlike encounter-sourced requests (which
 	sit in Requested Therapies until a therapist accepts them), a direct
@@ -198,13 +232,19 @@ def create_therapy_request(patient, therapy_type, no_of_sessions=1, practitioner
 	practitioner is required here (unlike Lab Portal's equivalent) because
 	Therapy Plan.practitioner is mandatory and there's no encounter to pull
 	it from.
+
+	Either therapy_plan_template (builds one therapy_plan_details row per
+	template line, mirroring Therapy Plan's own
+	set_therapy_details_from_template()) or a manual therapy_type +
+	no_of_sessions pair must be supplied - the frontend dialog only ever
+	sends one or the other.
 	"""
 	if not patient:
 		frappe.throw(_("Please select a patient"))
-	if not therapy_type:
-		frappe.throw(_("Please select a therapy type"))
 	if not practitioner:
 		frappe.throw(_("Please select a practitioner"))
+	if not therapy_plan_template and not therapy_type:
+		frappe.throw(_("Please select a therapy type or a therapy plan template"))
 
 	patient_doc = frappe.get_doc("Patient", patient)
 
@@ -214,7 +254,21 @@ def create_therapy_request(patient, therapy_type, no_of_sessions=1, practitioner
 	if not company:
 		frappe.throw(_("No default Company is configured - cannot create Therapy Plan without one"))
 
-	no_of_sessions = cint(no_of_sessions) or 1
+	if therapy_plan_template:
+		template = frappe.get_doc("Therapy Plan Template", therapy_plan_template)
+		if not template.therapy_types:
+			frappe.throw(_("Therapy Plan Template {0} has no therapy types configured").format(therapy_plan_template))
+		plan_details = [
+			{
+				"therapy_type": row.therapy_type,
+				"no_of_sessions": row.no_of_sessions,
+				"interval": row.interval,
+			}
+			for row in template.therapy_types
+		]
+	else:
+		no_of_sessions = cint(no_of_sessions) or 1
+		plan_details = [{"therapy_type": therapy_type, "no_of_sessions": no_of_sessions}]
 
 	therapy_plan = frappe.get_doc(
 		{
@@ -225,21 +279,20 @@ def create_therapy_request(patient, therapy_type, no_of_sessions=1, practitioner
 			"start_date": today(),
 			"practitioner": practitioner,
 			"company": company,
+			"therapy_plan_template": therapy_plan_template or None,
 			# custom_source_encounter deliberately left unset - this is how
 			# get_requested/pending/completed_therapies tell a direct plan
 			# apart from an encounter-sourced one.
-			"therapy_plan_details": [
-				{
-					"therapy_type": therapy_type,
-					"no_of_sessions": no_of_sessions,
-				}
-			],
+			"therapy_plan_details": plan_details,
 		}
 	)
 	therapy_plan.insert(ignore_permissions=True)
 
 	invoice = _create_therapy_invoice(
-		patient_doc, therapy_type, no_of_sessions, reference_dt="Therapy Plan", reference_dn=therapy_plan.name
+		patient_doc,
+		[{"therapy_type": d["therapy_type"], "no_of_sessions": d["no_of_sessions"]} for d in plan_details],
+		reference_dt="Therapy Plan",
+		reference_dn=therapy_plan.name,
 	)
 	therapy_plan.db_set("custom_invoice", invoice.name)
 
@@ -335,6 +388,7 @@ def get_pending_therapies(search_patient=None, search_encounter=None, search_dat
 			tpd.name AS therapy_id,
 			tpd.therapy_type AS therapy_type,
 			tpd.no_of_sessions AS no_of_sessions,
+			tpd.sessions_completed AS sessions_completed,
 			tpd.interval AS `interval`,
 			tpd.custom_priority AS priority,
 			tpd.custom_therapy_plan AS custom_therapy_plan,
@@ -376,6 +430,7 @@ def get_pending_therapies(search_patient=None, search_encounter=None, search_dat
 			tp.name AS custom_therapy_plan,
 			tpd.therapy_type AS therapy_type,
 			tpd.no_of_sessions AS no_of_sessions,
+			tpd.sessions_completed AS sessions_completed,
 			tp.patient AS patient,
 			tp.patient_name AS patient_name,
 			tp.creation AS encounter_date,
@@ -497,7 +552,10 @@ def accept_therapy_request(therapy_id, patient_id, encounter_id, therapy_type):
 	no_of_sessions = therapy_row.no_of_sessions or 1
 
 	invoice = _create_therapy_invoice(
-		patient, therapy_type, no_of_sessions, reference_dt="Patient Encounter", reference_dn=encounter_id
+		patient,
+		[{"therapy_type": therapy_type, "no_of_sessions": no_of_sessions}],
+		reference_dt="Patient Encounter",
+		reference_dn=encounter_id,
 	)
 
 	company = frappe.defaults.get_user_default("Company") or frappe.db.get_single_value(
@@ -555,12 +613,14 @@ def accept_direct_therapy_request(therapy_plan_name):
 		frappe.throw(_("Therapy Plan {0} has no therapy plan details").format(therapy_plan_name))
 
 	patient = frappe.get_doc("Patient", therapy_plan.patient)
-	detail_row = therapy_plan.therapy_plan_details[0]
+	items = [
+		{"therapy_type": d.therapy_type, "no_of_sessions": d.no_of_sessions or 1}
+		for d in therapy_plan.therapy_plan_details
+	]
 
 	invoice = _create_therapy_invoice(
 		patient,
-		detail_row.therapy_type,
-		detail_row.no_of_sessions or 1,
+		items,
 		reference_dt="Therapy Plan",
 		reference_dn=therapy_plan.name,
 	)
@@ -573,18 +633,44 @@ def accept_direct_therapy_request(therapy_plan_name):
 	}
 
 
-def _create_therapy_invoice(patient, therapy_type, no_of_sessions, reference_dt, reference_dn):
+def _create_therapy_invoice(patient, items, reference_dt, reference_dn):
 	"""Shared by accept_therapy_request/create_therapy_request/
 	accept_direct_therapy_request - builds and submits the Sales Invoice
-	for one therapy plan's sessions."""
+	covering one or more therapy plan line items.
+
+	items: list of {"therapy_type": <Therapy Type name>, "no_of_sessions": <int>}.
+	One Sales Invoice Item is created per entry, all pointing back at the
+	same reference_dt/reference_dn (the Therapy Plan or Patient Encounter
+	being invoiced) - this is what lets a template-based plan with several
+	therapy types be invoiced in a single Sales Invoice instead of one per
+	type. Existing single-type callers just pass a one-item list.
+	"""
 	customer = patient.customer
 	if not customer:
 		frappe.throw(_("Patient {0} has no linked Customer").format(patient.name))
 
-	item_code = frappe.db.get_value("Therapy Type", therapy_type, "item")
-	if not item_code:
-		frappe.throw(_("Therapy Type {0} has no linked Item").format(therapy_type))
-	rate = frappe.db.get_value("Item Price", {"item_code": item_code}, "price_list_rate") or 0
+	if not items:
+		frappe.throw(_("No therapy types to invoice"))
+
+	invoice_items = []
+	for entry in items:
+		therapy_type = entry.get("therapy_type")
+		no_of_sessions = cint(entry.get("no_of_sessions")) or 1
+
+		item_code = frappe.db.get_value("Therapy Type", therapy_type, "item")
+		if not item_code:
+			frappe.throw(_("Therapy Type {0} has no linked Item").format(therapy_type))
+		rate = frappe.db.get_value("Item Price", {"item_code": item_code}, "price_list_rate") or 0
+
+		invoice_items.append(
+			{
+				"item_code": item_code,
+				"qty": no_of_sessions,
+				"rate": rate,
+				"reference_dt": reference_dt,
+				"reference_dn": reference_dn,
+			}
+		)
 
 	invoice = frappe.get_doc(
 		{
@@ -596,15 +682,7 @@ def _create_therapy_invoice(patient, therapy_type, no_of_sessions, reference_dt,
 			# has no way to bucket this invoice under Rehabilitation - it
 			# would fall into "Other Invoices" instead.
 			"custom_department": "Rehabilitation",
-			"items": [
-				{
-					"item_code": item_code,
-					"qty": no_of_sessions,
-					"rate": rate,
-					"reference_dt": reference_dt,
-					"reference_dn": reference_dn,
-				}
-			],
+			"items": invoice_items,
 		}
 	)
 	invoice.insert(ignore_permissions=True)
@@ -629,3 +707,333 @@ def get_print_formats(doctype):
 def get_print_content(doctype, docname, print_format=None):
 	html = frappe.get_print(doctype, docname, print_format=print_format or None)
 	return {"html": html}
+
+
+# =============================================
+# THERAPY SESSIONS - scheduling & delivery
+#
+# A Therapy Session is created as a draft (docstatus 0) when scheduled -
+# this is the "Scheduled" state shown on the portal's Schedule tab/
+# calendar, mirroring how a not-yet-submitted document naturally
+# represents "hasn't happened yet". Submitting it (docstatus 1) is
+# "session delivered": Therapy Session's own on_submit() (see
+# therapy_session.py) increments the matching Therapy Plan Detail row's
+# sessions_completed and re-saves the Therapy Plan, whose own
+# validate()/set_status() recomputes total_sessions_completed and flips
+# status Not Started -> In Progress -> Completed automatically - none of
+# that bookkeeping is duplicated here, it's the same path the standard
+# desk form already uses.
+# =============================================
+
+
+@frappe.whitelist()
+def get_active_therapy_plans(search_patient=None):
+	"""Paid Therapy Plans that still have therapy left to deliver - the
+	pool a therapist schedules/logs sessions against. Excludes Completed
+	plans and unpaid ones (custom_invoice not set) - therapy can't proceed
+	before payment, same gate the "Awaiting Payment" state on Pending
+	cards already encodes."""
+	filters = {
+		"status": ["in", ["Not Started", "In Progress"]],
+		"custom_invoice": ["is", "set"],
+	}
+	or_filters = None
+	if search_patient:
+		or_filters = {
+			"patient": ["like", f"%{search_patient}%"],
+			"patient_name": ["like", f"%{search_patient}%"],
+		}
+
+	plans = frappe.get_all(
+		"Therapy Plan",
+		filters=filters,
+		or_filters=or_filters,
+		fields=["name", "patient", "patient_name", "practitioner", "total_sessions", "total_sessions_completed"],
+		order_by="modified desc",
+	)
+	for plan in plans:
+		plan["therapy_types"] = frappe.get_all(
+			"Therapy Plan Detail",
+			filters={"parent": plan.name, "parenttype": "Therapy Plan"},
+			fields=["therapy_type", "no_of_sessions", "sessions_completed"],
+		)
+	return plans
+
+
+@frappe.whitelist()
+def schedule_therapy_session(therapy_plan, therapy_type, start_date, start_time, practitioner=None, location=None):
+	"""Book a future Therapy Session against an already-paid Therapy Plan.
+	Left as a draft - it only becomes a delivered session, and only then
+	rolls into the Plan's counts, once complete_therapy_session() submits
+	it. Therapy Session's own validate_duplicate() already rejects a slot
+	overlapping another session for the same patient or practitioner, so
+	no separate conflict check is needed here."""
+	if not (therapy_plan and therapy_type and start_date and start_time):
+		frappe.throw(_("Please fill in all required fields"))
+
+	plan = frappe.get_doc("Therapy Plan", therapy_plan)
+	if not plan.custom_invoice:
+		frappe.throw(_("Therapy Plan {0} has not been paid for yet").format(therapy_plan))
+
+	therapy_type_doc = frappe.get_cached_doc("Therapy Type", therapy_type)
+
+	session = frappe.get_doc(
+		{
+			"doctype": "Therapy Session",
+			"patient": plan.patient,
+			"therapy_plan": therapy_plan,
+			"therapy_type": therapy_type,
+			"practitioner": practitioner or plan.practitioner,
+			"company": plan.company,
+			"start_date": start_date,
+			"start_time": start_time,
+			"duration": therapy_type_doc.default_duration or 30,
+			"rate": therapy_type_doc.rate or 0,
+			"location": location or None,
+		}
+	)
+	session.insert(ignore_permissions=True)
+
+	return {"status": "Success", "name": session.name}
+
+
+@frappe.whitelist()
+def get_scheduled_sessions(from_date=None, to_date=None, date=None, practitioner=None):
+	"""Therapy Sessions in a date range, for the Schedule tab's list and
+	calendar views - mirrors spa_portal.py's get_spa_bookings() calling
+	shapes (single `date` for the list view, `from_date`/`to_date` for the
+	calendar's visible month). Cancelled sessions (docstatus 2) are left
+	out - see cancel_therapy_session()."""
+	filters = {"docstatus": ["!=", 2]}
+	if date:
+		filters["start_date"] = date
+	elif from_date and to_date:
+		filters["start_date"] = ["between", [from_date, to_date]]
+	if practitioner:
+		filters["practitioner"] = practitioner
+
+	sessions = frappe.get_all(
+		"Therapy Session",
+		filters=filters,
+		fields=[
+			"name",
+			"patient",
+			"patient_name",
+			"therapy_type",
+			"therapy_plan",
+			"practitioner",
+			"start_date",
+			"start_time",
+			"duration",
+			"docstatus",
+		],
+		order_by="start_date asc, start_time asc",
+	)
+	for s in sessions:
+		s["status"] = "Completed" if s.docstatus == 1 else "Scheduled"
+	return sessions
+
+
+@frappe.whitelist()
+def get_therapy_session_exercises(therapy_session):
+	"""Exercise rows on a still-draft (scheduled) session, pre-populated
+	from the Therapy Type's exercise list by Therapy Session's own
+	validate() at insert time - fetched here so the 'Complete Session'
+	dialog can show the planned exercises with editable Counts Completed /
+	Assistance Level fields."""
+	session = frappe.get_doc("Therapy Session", therapy_session)
+	return {
+		"patient_name": session.patient_name,
+		"therapy_type": session.therapy_type,
+		"start_date": session.start_date,
+		"start_time": session.start_time,
+		"docstatus": session.docstatus,
+		"exercises": [
+			{
+				"exercise_type": row.exercise_type,
+				"difficulty_level": row.difficulty_level,
+				"counts_target": row.counts_target,
+				"counts_completed": row.counts_completed,
+				"assistance_level": row.assistance_level,
+			}
+			for row in session.exercises
+		],
+	}
+
+
+@frappe.whitelist()
+def complete_therapy_session(therapy_session, exercises=None, notes=None):
+	"""Submit a scheduled (draft) Therapy Session with the actual counts
+	completed - this is what rolls the delivered session into the Therapy
+	Plan's session counts and status (see this section's module note
+	above). exercises, if given, replaces the session's exercise rows with
+	the therapist's logged results; if omitted, the exercises already on
+	the draft (the Therapy Type's defaults) are submitted as-is."""
+	if isinstance(exercises, str):
+		exercises = json.loads(exercises)
+
+	session = frappe.get_doc("Therapy Session", therapy_session)
+	if session.docstatus != 0:
+		frappe.throw(_("Therapy Session {0} has already been submitted or cancelled").format(therapy_session))
+
+	if exercises:
+		session.set("exercises", [])
+		for ex in exercises:
+			session.append(
+				"exercises",
+				{
+					"exercise_type": ex.get("exercise_type"),
+					"counts_target": cint(ex.get("counts_target")) or 0,
+					"counts_completed": cint(ex.get("counts_completed")) or 0,
+					"assistance_level": ex.get("assistance_level") or None,
+				},
+			)
+
+	session.save(ignore_permissions=True)
+	session.submit()
+
+	if notes:
+		session.add_comment("Comment", notes)
+
+	plan_status = frappe.db.get_value("Therapy Plan", session.therapy_plan, "status")
+
+	return {
+		"status": "Success",
+		"name": session.name,
+		"therapy_plan": session.therapy_plan,
+		"therapy_plan_status": plan_status,
+	}
+
+
+@frappe.whitelist()
+def cancel_therapy_session(therapy_session):
+	"""Cancel a scheduled or delivered session. A still-draft (scheduled,
+	not yet delivered) session is simply deleted - Frappe's submit
+	workflow only recognises cancellation (docstatus 2) for submitted
+	documents, and a draft never rolled into the Plan's session counts in
+	the first place, so there's nothing to unwind. A submitted session is
+	cancelled properly instead, letting Therapy Session's own on_cancel()
+	decrement the Plan's session count exactly as it would from the
+	standard desk form."""
+	session = frappe.get_doc("Therapy Session", therapy_session)
+	if session.docstatus == 0:
+		frappe.delete_doc("Therapy Session", therapy_session, ignore_permissions=True)
+	elif session.docstatus == 1:
+		session.cancel()
+	else:
+		frappe.throw(_("Therapy Session {0} is already cancelled").format(therapy_session))
+	return {"status": "Success"}
+
+
+@frappe.whitelist()
+def get_rehab_summary():
+	"""Aggregate counts for the Rehab Portal's stat tiles - mirrors Spa
+	Portal's Total/Paid/Unpaid summary strip, adapted to rehab's own
+	Requested -> Pending -> Completed queue plus today's session load.
+	Reuses get_requested_therapies()/get_pending_therapies() rather than
+	re-deriving the same encounter-sourced/direct-sourced merge logic in
+	raw SQL a second time, trading a little extra query overhead for one
+	less place that logic can drift out of sync."""
+	requested = get_requested_therapies()
+	pending = get_pending_therapies()
+	pending_unpaid = sum(1 for row in pending if row.get("payment_status") != "Paid")
+
+	today_str = today()
+	sessions_scheduled_today = frappe.db.count("Therapy Session", filters={"start_date": today_str, "docstatus": 0})
+	sessions_completed_today = frappe.db.count("Therapy Session", filters={"start_date": today_str, "docstatus": 1})
+
+	return {
+		"requested": len(requested),
+		"pending": len(pending),
+		"pending_unpaid": pending_unpaid,
+		"sessions_scheduled_today": sessions_scheduled_today,
+		"sessions_completed_today": sessions_completed_today,
+	}
+
+
+# =============================================
+# OUTCOME TRACKING - Patient Assessments
+#
+# Patient Assessment is a standard Frappe Healthcare doctype (pain scale,
+# range-of-motion sheets, etc. are just differently-configured Patient
+# Assessment Templates) - nothing new is added to the schema here, this
+# just exposes create/list endpoints for it from the portal so a
+# therapist doesn't have to leave for the desk form to record one.
+# =============================================
+
+
+@frappe.whitelist()
+def get_assessment_templates():
+	"""Patient Assessment Templates (e.g. a pain scale or a range-of-motion
+	sheet) for the 'Record Assessment' dialog, each with its parameter list
+	and scale so the frontend can render one score input per parameter."""
+	templates = frappe.get_all(
+		"Patient Assessment Template",
+		fields=["name", "scale_min", "scale_max"],
+		order_by="name asc",
+	)
+	for t in templates:
+		t["parameters"] = frappe.get_all(
+			"Patient Assessment Detail",
+			filters={"parent": t.name, "parenttype": "Patient Assessment Template"},
+			fields=["assessment_parameter"],
+			pluck="assessment_parameter",
+		)
+	return templates
+
+
+@frappe.whitelist()
+def create_patient_assessment(patient, assessment_template, scores, therapy_session=None, assessment_datetime=None):
+	"""Record an outcome assessment (pain scale, range of motion, etc.)
+	against a patient - optionally tied to a specific Therapy Session, or
+	standalone against the patient's care in general.
+
+	scores: JSON string / list of
+	  {"parameter": <Patient Assessment Parameter name>, "score": <int>}.
+
+	total_score is approximated as scale_max * number of parameters scored
+	(Patient Assessment's own controller only computes total_score_obtained
+	server-side - total_score is otherwise set by the desk form's client
+	script, which this whitelisted call bypasses)."""
+	if isinstance(scores, str):
+		scores = json.loads(scores)
+	if not patient:
+		frappe.throw(_("Please select a patient"))
+	if not assessment_template:
+		frappe.throw(_("Please select an assessment template"))
+	if not scores:
+		frappe.throw(_("Please score at least one parameter"))
+
+	template = frappe.get_doc("Patient Assessment Template", assessment_template)
+
+	assessment = frappe.get_doc(
+		{
+			"doctype": "Patient Assessment",
+			"patient": patient,
+			"therapy_session": therapy_session or None,
+			"assessment_template": assessment_template,
+			"assessment_datetime": assessment_datetime or now_datetime(),
+			"scale_min": template.scale_min,
+			"scale_max": template.scale_max,
+			"total_score": (template.scale_max or 0) * len(scores),
+			"assessment_sheet": [
+				{"parameter": s.get("parameter"), "score": cint(s.get("score"))} for s in scores
+			],
+		}
+	)
+	assessment.insert(ignore_permissions=True)
+	assessment.submit()
+
+	return {"status": "Success", "name": assessment.name, "total_score_obtained": assessment.total_score_obtained}
+
+
+@frappe.whitelist()
+def get_patient_assessments(patient):
+	"""Assessment history for a patient - used for the outcome trend view
+	opened from a Pending/Completed plan card."""
+	return frappe.get_all(
+		"Patient Assessment",
+		filters={"patient": patient, "docstatus": 1},
+		fields=["name", "assessment_template", "assessment_datetime", "total_score_obtained", "total_score"],
+		order_by="assessment_datetime desc",
+	)

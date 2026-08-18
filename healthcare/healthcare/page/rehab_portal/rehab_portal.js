@@ -554,7 +554,189 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 margin: 0;
             }
 
+            /* --- Stat tiles (Spa Portal's summary strip, adapted) --- */
+            .rehab-stats-bar {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 12px;
+                margin-bottom: 16px;
+            }
+
+            .rehab-stat-tile {
+                background: white;
+                border: 1px solid #e9ecef;
+                border-radius: 10px;
+                padding: 14px 16px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            }
+
+            .rehab-stat-tile .stat-label {
+                font-size: 0.78rem;
+                color: #868e96;
+                font-weight: 500;
+                margin-bottom: 4px;
+            }
+
+            .rehab-stat-tile .stat-value {
+                font-size: 1.35rem;
+                font-weight: 700;
+                color: #2c3e50;
+            }
+
+            .rehab-stat-tile.stat-orange .stat-value { color: #fd7e14; }
+            .rehab-stat-tile.stat-green .stat-value { color: #28a745; }
+            .rehab-stat-tile.stat-blue .stat-value { color: #667eea; }
+
+            /* --- Session progress bar on Pending cards --- */
+            .session-progress { margin-top: 8px; }
+
+            .session-progress-label {
+                display: flex;
+                justify-content: space-between;
+                font-size: 0.78rem;
+                color: #6c757d;
+                margin-bottom: 4px;
+            }
+
+            .session-progress-bar {
+                height: 6px;
+                background: #e9ecef;
+                border-radius: 3px;
+                overflow: hidden;
+            }
+
+            .session-progress-fill {
+                height: 100%;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                border-radius: 3px;
+            }
+
+            /* --- Schedule tab --- */
+            .schedule-toolbar {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 16px;
+            }
+
+            .sched-view-toggle {
+                display: flex;
+                gap: 0;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                overflow: hidden;
+                width: fit-content;
+            }
+
+            .sched-view-btn {
+                padding: 8px 20px;
+                background: #f8f9fa;
+                border: none;
+                color: #6c757d;
+                font-weight: 600;
+                font-size: 0.9rem;
+                cursor: pointer;
+                transition: all 0.3s ease;
+            }
+
+            .sched-view-btn:hover { background: #e9ecef; }
+            .sched-view-btn.active {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+
+            .sched-calendar { margin-top: 10px; }
+
+            .sched-cal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 15px;
+            }
+
+            .sched-cal-header h5 { margin: 0; font-weight: 600; color: #495057; }
+
+            .sched-cal-nav-btn {
+                background: #f8f9fa; border: 1px solid #d1d8dd; border-radius: 4px;
+                padding: 6px 12px; cursor: pointer; font-weight: 600; color: #495057;
+            }
+            .sched-cal-nav-btn:hover { background: #e9ecef; }
+
+            .sched-cal-grid {
+                display: grid;
+                grid-template-columns: repeat(7, 1fr);
+                border: 1px solid #d1d8dd;
+                border-radius: 8px;
+                overflow: hidden;
+            }
+
+            .sched-cal-day-header {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 10px 5px;
+                text-align: center;
+                font-weight: 600;
+                font-size: 0.85rem;
+            }
+
+            .sched-cal-day {
+                min-height: 100px;
+                padding: 5px;
+                border: 1px solid #e9ecef;
+                background: white;
+                vertical-align: top;
+                font-size: 0.8rem;
+            }
+
+            .sched-cal-day.other-month { background: #f8f9fa; color: #adb5bd; }
+            .sched-cal-day.today { background: #eef2ff; }
+
+            .sched-cal-day-num {
+                font-weight: 600;
+                font-size: 0.85rem;
+                margin-bottom: 4px;
+                color: #495057;
+            }
+
+            .sched-cal-day.other-month .sched-cal-day-num { color: #adb5bd; }
+            .sched-cal-day.today .sched-cal-day-num { color: #667eea; }
+
+            .sched-cal-event {
+                background: #cfe2ff;
+                color: #084298;
+                padding: 2px 6px;
+                border-radius: 4px;
+                margin-bottom: 3px;
+                font-size: 0.7rem;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                cursor: pointer;
+            }
+
+            .sched-cal-event:hover { opacity: 0.85; }
+            .sched-cal-event.status-completed { background: #d4edda; color: #155724; }
+
+            .assessment-score-row {
+                display: grid;
+                grid-template-columns: 1fr 120px;
+                gap: 10px;
+                align-items: center;
+                padding: 6px 0;
+                border-bottom: 1px solid #f1f3f5;
+            }
+
+            .assessment-history-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 8px 10px;
+                border-bottom: 1px solid #f1f3f5;
+                font-size: 0.88rem;
+            }
+
             @media (max-width: 768px) {
+                .rehab-stats-bar { grid-template-columns: 1fr 1fr; }
+                .schedule-toolbar { flex-direction: column; align-items: flex-start; gap: 10px; }
                 .rehab-wrapper {
                     padding: 15px;
                 }
@@ -636,6 +818,8 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                     </div>
                 </div>
 
+                <div class="rehab-stats-bar" id="rehab-stats-bar"></div>
+
                 <div class="tabs-section">
                     <button class="tab-btn active" data-tab="requested">
                         <i class="fa fa-paper-plane"></i> Requested Therapies
@@ -648,6 +832,9 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                     <button class="tab-btn" data-tab="completed">
                         <i class="fa fa-check-circle"></i> Completed Therapies
                         <span class="badge badge-success" id="completed-count">0</span>
+                    </button>
+                    <button class="tab-btn" data-tab="schedule">
+                        <i class="fa fa-calendar"></i> Schedule
                     </button>
                     <div class="view-toggle-group">
                         <button class="view-toggle-btn active" data-view="card" title="Card View">
@@ -684,6 +871,38 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 <div class="scrollable-content">
                     <div class="rehab-cards-container" id="completed-rehab-container"></div>
                     <div class="rehab-list-container" id="completed-rehab-list" style="display: none;"></div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="schedule-tab">
+                <div class="schedule-toolbar">
+                    <button class="btn-new-request" id="schedule-session-btn">
+                        <i class="fa fa-plus"></i> Schedule Session
+                    </button>
+                    <div class="sched-view-toggle">
+                        <button class="sched-view-btn active" data-view="list">
+                            <i class="fa fa-list"></i> List
+                        </button>
+                        <button class="sched-view-btn" data-view="calendar">
+                            <i class="fa fa-calendar"></i> Calendar
+                        </button>
+                    </div>
+                </div>
+
+                <div id="sched-list-view">
+                    <div class="completed-filters">
+                        <div class="frappe-control" data-fieldname="sched_filter_date"></div>
+                        <button class="btn btn-primary" id="sched-filter-btn">
+                            <i class="fa fa-filter"></i> Filter
+                        </button>
+                    </div>
+                    <div class="scrollable-content">
+                        <div class="rehab-list-container" id="sched-list-container"></div>
+                    </div>
+                </div>
+
+                <div id="sched-calendar-view" style="display: none;">
+                    <div class="sched-calendar" id="sched-calendar"></div>
                 </div>
             </div>
         </div>
@@ -792,6 +1011,27 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
 
     completed_date_field.set_value(frappe.datetime.get_today());
 
+    // Schedule tab: view mode + the month currently shown in its calendar
+    // (separate from currentView/card-list toggle above, which only
+    // covers the Requested/Pending/Completed queue tabs).
+    let schedView = 'list';
+    let schedCalYear, schedCalMonth;
+    const schedNow = new Date();
+    schedCalYear = schedNow.getFullYear();
+    schedCalMonth = schedNow.getMonth();
+
+    let sched_filter_date = frappe.ui.form.make_control({
+        parent: page.main.find('[data-fieldname="sched_filter_date"]'),
+        df: {
+            fieldtype: 'Date',
+            fieldname: 'sched_filter_date',
+            label: 'Filter by Date',
+            default: frappe.datetime.get_today()
+        },
+        render_input: true
+    });
+    sched_filter_date.set_value(frappe.datetime.get_today());
+
     function updateEncounterFilter(patient_id, date) {
         search_encounter_field.df.get_query = function() {
             let filters = { 'docstatus': ['in', [0, 1]] };
@@ -834,6 +1074,39 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         $(this).addClass('active');
         page.main.find('.tab-content').removeClass('active');
         page.main.find(`#${tab}-tab`).addClass('active');
+        if (tab === 'schedule') {
+            if (schedView === 'list') {
+                loadSchedList();
+            } else {
+                renderSchedCalendar();
+            }
+        }
+    });
+
+    // Schedule tab: list/calendar toggle (separate from the queue tabs'
+    // card/list toggle - the two live in different tab-contents).
+    page.main.find('.sched-view-btn').on('click', function() {
+        const view = $(this).data('view');
+        schedView = view;
+        page.main.find('.sched-view-btn').removeClass('active');
+        $(this).addClass('active');
+        if (view === 'list') {
+            page.main.find('#sched-list-view').show();
+            page.main.find('#sched-calendar-view').hide();
+            loadSchedList();
+        } else {
+            page.main.find('#sched-list-view').hide();
+            page.main.find('#sched-calendar-view').show();
+            renderSchedCalendar();
+        }
+    });
+
+    page.main.find('#sched-filter-btn').on('click', function() {
+        loadSchedList();
+    });
+
+    page.main.find('#schedule-session-btn').on('click', function() {
+        openScheduleSessionDialog();
     });
 
     page.main.find('#search-btn').on('click', function() {
@@ -881,79 +1154,132 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             callback: function(r) {
                 const types = r.message || [];
 
-                const dialog = new frappe.ui.Dialog({
-                    title: __('New Therapy Request'),
-                    fields: [
-                        {
-                            fieldtype: 'Link',
-                            fieldname: 'patient',
-                            options: 'Patient',
-                            label: 'Patient',
-                            reqd: 1
-                        },
-                        {
-                            fieldtype: 'Link',
-                            fieldname: 'practitioner',
-                            options: 'Healthcare Practitioner',
-                            label: 'Practitioner',
-                            reqd: 1
-                        },
-                        {
-                            fieldtype: 'Column Break'
-                        },
-                        {
-                            fieldtype: 'Select',
-                            fieldname: 'therapy_type',
-                            label: 'Therapy Type',
-                            options: types.map(t => ({
-                                label: `${t.name} (${format_currency(t.rate)})`,
-                                value: t.name
-                            })),
-                            reqd: 1
-                        },
-                        {
-                            fieldtype: 'Int',
-                            fieldname: 'no_of_sessions',
-                            label: 'No of Sessions',
-                            default: 1,
-                            reqd: 1
-                        }
-                    ],
-                    primary_action_label: __('Create Request'),
-                    primary_action: function(values) {
-                        frappe.call({
-                            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.create_therapy_request',
-                            args: {
-                                patient: values.patient,
-                                therapy_type: values.therapy_type,
-                                no_of_sessions: values.no_of_sessions || 1,
-                                practitioner: values.practitioner
-                            },
-                            freeze: true,
-                            freeze_message: __('Creating therapy request...'),
-                            callback: function(r) {
-                                if (r.message && r.message.status === 'Success') {
-                                    frappe.show_alert({
-                                        message: __('Therapy request created.'),
-                                        indicator: 'green'
-                                    }, 6);
-                                    dialog.hide();
-                                    loadTherapies();
-                                }
-                            },
-                            error: function(r) {
-                                frappe.show_alert({
-                                    message: r.message || __('Error creating therapy request'),
-                                    indicator: 'red'
-                                }, 10);
-                            }
-                        });
+                frappe.call({
+                    method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_therapy_plan_templates',
+                    callback: function(rt) {
+                        const templates = rt.message || [];
+                        buildDialog(types, templates);
                     }
                 });
-
-                dialog.show();
             }
         });
+
+        function buildDialog(types, templates) {
+            const dialog = new frappe.ui.Dialog({
+                title: __('New Therapy Request'),
+                fields: [
+                    {
+                        fieldtype: 'Link',
+                        fieldname: 'patient',
+                        options: 'Patient',
+                        label: 'Patient',
+                        reqd: 1
+                    },
+                    {
+                        fieldtype: 'Link',
+                        fieldname: 'practitioner',
+                        options: 'Healthcare Practitioner',
+                        label: 'Practitioner',
+                        reqd: 1
+                    },
+                    {
+                        fieldtype: 'Column Break'
+                    },
+                    {
+                        fieldtype: 'Select',
+                        fieldname: 'therapy_plan_template',
+                        label: 'Use a Therapy Plan Template (optional)',
+                        options: [''].concat(templates.map(t => t.name)),
+                        description: __('Bundles one or more therapy types with a preset number of sessions - leave blank to pick a single therapy type manually below.'),
+                        onchange: function() { renderTemplatePreview(); }
+                    },
+                    {
+                        fieldtype: 'HTML',
+                        fieldname: 'template_preview',
+                        depends_on: 'eval:doc.therapy_plan_template',
+                        options: '<div id="therapy-template-preview"></div>'
+                    },
+                    {
+                        fieldtype: 'Select',
+                        fieldname: 'therapy_type',
+                        label: 'Therapy Type',
+                        depends_on: 'eval:!doc.therapy_plan_template',
+                        mandatory_depends_on: 'eval:!doc.therapy_plan_template',
+                        options: types.map(t => ({
+                            label: `${t.name} (${format_currency(t.rate)})`,
+                            value: t.name
+                        }))
+                    },
+                    {
+                        fieldtype: 'Int',
+                        fieldname: 'no_of_sessions',
+                        label: 'No of Sessions',
+                        default: 1,
+                        depends_on: 'eval:!doc.therapy_plan_template',
+                        mandatory_depends_on: 'eval:!doc.therapy_plan_template'
+                    }
+                ],
+                primary_action_label: __('Create Request'),
+                primary_action: function(values) {
+                    if (!values.therapy_plan_template && !values.therapy_type) {
+                        frappe.show_alert({ message: __('Please select a therapy type or a template'), indicator: 'orange' }, 5);
+                        return;
+                    }
+                    frappe.call({
+                        method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.create_therapy_request',
+                        args: {
+                            patient: values.patient,
+                            therapy_type: values.therapy_plan_template ? null : values.therapy_type,
+                            no_of_sessions: values.no_of_sessions || 1,
+                            practitioner: values.practitioner,
+                            therapy_plan_template: values.therapy_plan_template || null
+                        },
+                        freeze: true,
+                        freeze_message: __('Creating therapy request...'),
+                        callback: function(r) {
+                            if (r.message && r.message.status === 'Success') {
+                                frappe.show_alert({
+                                    message: __('Therapy request created.'),
+                                    indicator: 'green'
+                                }, 6);
+                                dialog.hide();
+                                loadTherapies();
+                            }
+                        },
+                        error: function(r) {
+                            frappe.show_alert({
+                                message: r.message || __('Error creating therapy request'),
+                                indicator: 'red'
+                            }, 10);
+                        }
+                    });
+                }
+            });
+
+            function renderTemplatePreview() {
+                const templateName = dialog.get_value('therapy_plan_template');
+                const target = dialog.$wrapper.find('#therapy-template-preview');
+                if (!templateName) {
+                    target.empty();
+                    return;
+                }
+                frappe.call({
+                    method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_therapy_plan_template_detail',
+                    args: { therapy_plan_template: templateName },
+                    callback: function(r) {
+                        const rows = r.message || [];
+                        let html = '<table class="table table-bordered" style="margin-top:6px;"><thead><tr><th>Therapy Type</th><th>Sessions</th><th>Rate</th></tr></thead><tbody>';
+                        rows.forEach(function(row) {
+                            html += `<tr><td>${row.therapy_type}</td><td>${row.no_of_sessions || 0}</td><td>${format_currency(row.rate)}</td></tr>`;
+                        });
+                        html += '</tbody></table>';
+                        target.html(html);
+                    }
+                });
+            }
+
+            dialog.show();
+        }
     }
 
     function loadTherapies() {
@@ -965,6 +1291,40 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         loadRequestedTherapies(patient, encounter, date);
         loadPendingTherapies(patient, encounter, date);
         loadCompletedTherapies(patient, encounter, completed_date_field.get_value());
+        loadRehabSummary();
+    }
+
+    // =============================================
+    // STAT TILES (Spa Portal's summary strip, adapted to rehab's queue)
+    // =============================================
+    function loadRehabSummary() {
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_rehab_summary',
+            callback: function(r) {
+                renderStatTiles(r.message || {});
+            }
+        });
+    }
+
+    function renderStatTiles(stats) {
+        page.main.find('#rehab-stats-bar').html(`
+            <div class="rehab-stat-tile stat-blue">
+                <div class="stat-label">Requested</div>
+                <div class="stat-value">${stats.requested || 0}</div>
+            </div>
+            <div class="rehab-stat-tile stat-orange">
+                <div class="stat-label">Awaiting Payment</div>
+                <div class="stat-value">${stats.pending_unpaid || 0}</div>
+            </div>
+            <div class="rehab-stat-tile stat-blue">
+                <div class="stat-label">Sessions Scheduled Today</div>
+                <div class="stat-value">${stats.sessions_scheduled_today || 0}</div>
+            </div>
+            <div class="rehab-stat-tile stat-green">
+                <div class="stat-label">Sessions Completed Today</div>
+                <div class="stat-value">${stats.sessions_completed_today || 0}</div>
+            </div>
+        `);
     }
 
     function loadRequestedTherapies(patient, encounter, date) {
@@ -1269,6 +1629,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                                     <i class="fa ${paymentBadgeIcon}"></i> ${therapy.payment_status}
                                 </span>
                             </div>
+                            ${isPaid ? renderSessionProgress(therapy) : ''}
                         </div>
                     </div>
                     <div class="rehab-card-footer">
@@ -1278,7 +1639,16 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                         <div class="rehab-card-actions">
                             ${isPaid && therapy.custom_therapy_plan ? `
                                 <button class="btn btn-primary btn-view-plan">
-                                    <i class="fa fa-eye"></i> View Plan
+                                    <i class="fa fa-eye"></i> Plan
+                                </button>
+                                <button class="btn btn-success btn-schedule-session">
+                                    <i class="fa fa-calendar-plus-o"></i> Schedule
+                                </button>
+                                <button class="btn btn-secondary btn-record-assessment">
+                                    <i class="fa fa-bar-chart"></i> Assess
+                                </button>
+                                <button class="btn btn-secondary btn-view-assessments" title="Assessment History">
+                                    <i class="fa fa-history"></i>
                                 </button>
                             ` : isPaid ? `
                                 <button class="btn btn-warning">
@@ -1299,10 +1669,44 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                     e.stopPropagation();
                     frappe.set_route('Form', 'Therapy Plan', therapy.custom_therapy_plan);
                 });
+                card.find('.btn-schedule-session').on('click', function(e) {
+                    e.stopPropagation();
+                    openScheduleSessionDialog(therapy.custom_therapy_plan);
+                });
+                card.find('.btn-record-assessment').on('click', function(e) {
+                    e.stopPropagation();
+                    openRecordAssessmentDialog(therapy.patient, therapy.patient_name);
+                });
+                card.find('.btn-view-assessments').on('click', function(e) {
+                    e.stopPropagation();
+                    viewAssessmentHistory(therapy.patient, therapy.patient_name);
+                });
             }
 
             container.append(card);
         });
+    }
+
+    // Sessions-completed / no-of-sessions progress bar, shown on paid
+    // Pending cards (and reused nowhere else - Requested rows have no
+    // Therapy Plan yet to measure progress against, Completed rows are
+    // already done). Falls back to a 0-length bar rather than hiding
+    // itself when the counts are missing, so the layout doesn't jump.
+    function renderSessionProgress(therapy) {
+        const total = therapy.no_of_sessions || 0;
+        const done = therapy.sessions_completed || 0;
+        const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+        return `
+            <div class="session-progress">
+                <div class="session-progress-label">
+                    <span>Sessions</span>
+                    <span>${done} / ${total}</span>
+                </div>
+                <div class="session-progress-bar">
+                    <div class="session-progress-fill" style="width: ${pct}%;"></div>
+                </div>
+            </div>
+        `;
     }
 
     function renderPendingTherapyList(therapies, container) {
@@ -1313,7 +1717,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                         <th>Therapy Type</th>
                         <th>Patient</th>
                         <th>Date</th>
-                        <th>Diagnosis</th>
+                        <th>Progress</th>
                         <th>Payment</th>
                         <th>Priority</th>
                         <th>Actions</th>
@@ -1322,7 +1726,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 <tbody>
         `;
 
-        therapies.forEach(function(therapy) {
+        therapies.forEach(function(therapy, index) {
             const priorityClass = therapy.priority === 'High' ? 'priority-high' :
                                  therapy.priority === 'Medium' ? 'priority-medium' : 'priority-low';
             const isPaid = therapy.payment_status === 'Paid';
@@ -1330,17 +1734,26 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
 
             tableHtml += `
                 <tr style="${!isPaid ? 'opacity: 0.8;' : ''}">
-                    <td><strong>${therapy.therapy_type || '-'}</strong><br><small>Sessions: ${therapy.no_of_sessions || 'N/A'}</small></td>
+                    <td><strong>${therapy.therapy_type || '-'}</strong></td>
                     <td>${therapy.patient_name}<br><small>${therapy.patient}</small></td>
                     <td>${frappe.datetime.str_to_user(therapy.encounter_date)}</td>
-                    <td>${therapy.diagnosis || '-'}</td>
+                    <td style="min-width: 140px;">${isPaid ? renderSessionProgress(therapy) : `${therapy.sessions_completed || 0} / ${therapy.no_of_sessions || 0}`}</td>
                     <td><span class="${paymentBadgeClass}">${therapy.payment_status}</span></td>
                     <td>${therapy.priority ? `<span class="priority-badge ${priorityClass}">${therapy.priority}</span>` : '-'}</td>
                     <td>
                         <div class="rehab-list-actions">
                             ${isPaid && therapy.custom_therapy_plan ? `
                                 <button class="btn btn-primary btn-sm btn-view-plan" data-therapy-plan="${therapy.custom_therapy_plan}">
-                                    <i class="fa fa-eye"></i> View Plan
+                                    <i class="fa fa-eye"></i>
+                                </button>
+                                <button class="btn btn-success btn-sm btn-schedule-session" data-idx="${index}" title="Schedule Session">
+                                    <i class="fa fa-calendar-plus-o"></i>
+                                </button>
+                                <button class="btn btn-secondary btn-sm btn-record-assessment" data-idx="${index}" title="Record Assessment">
+                                    <i class="fa fa-bar-chart"></i>
+                                </button>
+                                <button class="btn btn-secondary btn-sm btn-view-assessments" data-idx="${index}" title="Assessment History">
+                                    <i class="fa fa-history"></i>
                                 </button>
                             ` : isPaid ? `
                                 <button class="btn btn-warning btn-sm" disabled>
@@ -1368,6 +1781,21 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             e.stopPropagation();
             const therapyPlan = $(this).data('therapy-plan');
             frappe.set_route('Form', 'Therapy Plan', therapyPlan);
+        });
+        container.find('.btn-schedule-session').on('click', function(e) {
+            e.stopPropagation();
+            const therapy = therapies[$(this).data('idx')];
+            if (therapy) openScheduleSessionDialog(therapy.custom_therapy_plan);
+        });
+        container.find('.btn-record-assessment').on('click', function(e) {
+            e.stopPropagation();
+            const therapy = therapies[$(this).data('idx')];
+            if (therapy) openRecordAssessmentDialog(therapy.patient, therapy.patient_name);
+        });
+        container.find('.btn-view-assessments').on('click', function(e) {
+            e.stopPropagation();
+            const therapy = therapies[$(this).data('idx')];
+            if (therapy) viewAssessmentHistory(therapy.patient, therapy.patient_name);
         });
     }
 
@@ -1645,6 +2073,527 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 });
             }
         );
+    }
+
+    // =============================================
+    // SCHEDULE TAB - booking + delivering Therapy Sessions
+    // (structured after Spa Portal's Bookings tab: a create form, a
+    // list/calendar toggle, and a calendar built the same way - but
+    // "booking" a session here means creating a real draft Therapy
+    // Session against a paid Therapy Plan, and "checking in" a booking
+    // means submitting it with logged exercise results.)
+    // =============================================
+
+    function openScheduleSessionDialog(prefill_plan) {
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_active_therapy_plans',
+            callback: function(r) {
+                const plans = r.message || [];
+                if (!plans.length) {
+                    frappe.show_alert({ message: __('No paid, active therapy plans to schedule against'), indicator: 'orange' }, 6);
+                    return;
+                }
+
+                const planOptions = plans.map(p => ({
+                    label: `${p.patient_name} - ${p.name} (${p.total_sessions_completed || 0}/${p.total_sessions || 0} sessions)`,
+                    value: p.name
+                }));
+
+                const dialog = new frappe.ui.Dialog({
+                    title: __('Schedule Therapy Session'),
+                    fields: [
+                        {
+                            fieldtype: 'Select',
+                            fieldname: 'therapy_plan',
+                            label: 'Therapy Plan',
+                            options: planOptions,
+                            reqd: 1,
+                            default: prefill_plan || (planOptions[0] && planOptions[0].value),
+                            onchange: function() { updateTherapyTypeOptions(); }
+                        },
+                        {
+                            fieldtype: 'Select',
+                            fieldname: 'therapy_type',
+                            label: 'Therapy Type',
+                            options: [],
+                            reqd: 1
+                        },
+                        { fieldtype: 'Column Break' },
+                        {
+                            fieldtype: 'Date',
+                            fieldname: 'start_date',
+                            label: 'Date',
+                            default: frappe.datetime.get_today(),
+                            reqd: 1
+                        },
+                        {
+                            fieldtype: 'Time',
+                            fieldname: 'start_time',
+                            label: 'Time',
+                            reqd: 1
+                        },
+                        { fieldtype: 'Column Break' },
+                        {
+                            fieldtype: 'Link',
+                            fieldname: 'practitioner',
+                            label: 'Practitioner (optional override)',
+                            options: 'Healthcare Practitioner'
+                        },
+                        {
+                            fieldtype: 'Select',
+                            fieldname: 'location',
+                            label: 'Location',
+                            options: '\nCenter\nHome\nTele'
+                        }
+                    ],
+                    primary_action_label: __('Schedule'),
+                    primary_action: function(values) {
+                        frappe.call({
+                            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.schedule_therapy_session',
+                            args: {
+                                therapy_plan: values.therapy_plan,
+                                therapy_type: values.therapy_type,
+                                start_date: values.start_date,
+                                start_time: values.start_time,
+                                practitioner: values.practitioner || null,
+                                location: values.location || null
+                            },
+                            freeze: true,
+                            freeze_message: __('Scheduling session...'),
+                            callback: function(r) {
+                                if (r.message && r.message.status === 'Success') {
+                                    frappe.show_alert({ message: __('Session scheduled'), indicator: 'green' }, 6);
+                                    dialog.hide();
+                                    if (page.main.find('#schedule-tab').hasClass('active')) {
+                                        if (schedView === 'list') loadSchedList();
+                                        else renderSchedCalendar();
+                                    }
+                                }
+                            },
+                            error: function(r) {
+                                frappe.show_alert({ message: r.message || __('Error scheduling session'), indicator: 'red' }, 10);
+                            }
+                        });
+                    }
+                });
+
+                function updateTherapyTypeOptions() {
+                    const planName = dialog.get_value('therapy_plan');
+                    const plan = plans.find(p => p.name === planName);
+                    const types = (plan && plan.therapy_types) || [];
+                    const options = types.map(t => ({
+                        label: `${t.therapy_type} (${t.sessions_completed || 0}/${t.no_of_sessions || 0})`,
+                        value: t.therapy_type
+                    }));
+                    dialog.set_df_property('therapy_type', 'options', options);
+                    dialog.set_value('therapy_type', options.length ? options[0].value : '');
+                }
+
+                dialog.show();
+                updateTherapyTypeOptions();
+            }
+        });
+    }
+
+    function openCompleteSessionDialog(session_name) {
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_therapy_session_exercises',
+            args: { therapy_session: session_name },
+            callback: function(r) {
+                const data = r.message;
+                if (!data) return;
+
+                let exerciseRowsHtml = '';
+                if (data.exercises && data.exercises.length) {
+                    data.exercises.forEach(function(ex, idx) {
+                        exerciseRowsHtml += `
+                            <div class="assessment-score-row" data-idx="${idx}">
+                                <div>
+                                    <strong>${ex.exercise_type}</strong>
+                                    <br><small style="color:#6c757d;">Target: ${ex.counts_target || 0}${ex.assistance_level ? ' &middot; ' + ex.assistance_level : ''}</small>
+                                </div>
+                                <input type="number" class="form-control exercise-completed-input" data-idx="${idx}" value="${ex.counts_completed || ex.counts_target || 0}" min="0" step="1">
+                            </div>
+                        `;
+                    });
+                } else {
+                    exerciseRowsHtml = `<p style="color:#6c757d;">${__('No exercises are configured on this Therapy Type - the session will be submitted with no exercise detail.')}</p>`;
+                }
+
+                const dialog = new frappe.ui.Dialog({
+                    title: __('Complete Session: {0}', [data.patient_name]),
+                    size: 'large',
+                    fields: [
+                        {
+                            fieldtype: 'HTML',
+                            fieldname: 'exercises_html',
+                            options: `<div style="margin-bottom:10px;"><strong>${data.therapy_type}</strong> &middot; ${frappe.datetime.str_to_user(data.start_date)} ${data.start_time || ''}</div>${exerciseRowsHtml}`
+                        },
+                        {
+                            fieldtype: 'Small Text',
+                            fieldname: 'notes',
+                            label: 'Therapist Notes (optional)'
+                        }
+                    ],
+                    primary_action_label: __('Submit Session'),
+                    primary_action: function(values) {
+                        const exercises = (data.exercises || []).map(function(ex, idx) {
+                            const input = dialog.$wrapper.find(`.exercise-completed-input[data-idx="${idx}"]`);
+                            return {
+                                exercise_type: ex.exercise_type,
+                                counts_target: ex.counts_target,
+                                counts_completed: parseInt(input.val()) || 0,
+                                assistance_level: ex.assistance_level
+                            };
+                        });
+
+                        frappe.call({
+                            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.complete_therapy_session',
+                            args: {
+                                therapy_session: session_name,
+                                exercises: JSON.stringify(exercises),
+                                notes: values.notes
+                            },
+                            freeze: true,
+                            freeze_message: __('Submitting session...'),
+                            callback: function(r) {
+                                if (r.message && r.message.status === 'Success') {
+                                    frappe.show_alert({
+                                        message: __('Session completed. Therapy Plan status: {0}', [r.message.therapy_plan_status]),
+                                        indicator: 'green'
+                                    }, 7);
+                                    dialog.hide();
+                                    loadSchedList();
+                                    loadTherapies();
+                                }
+                            },
+                            error: function(r) {
+                                frappe.show_alert({ message: r.message || __('Error completing session'), indicator: 'red' }, 10);
+                            }
+                        });
+                    }
+                });
+
+                dialog.show();
+            }
+        });
+    }
+
+    function cancelScheduledSession(session_name) {
+        frappe.confirm(
+            __('Cancel this scheduled session?'),
+            function() {
+                frappe.call({
+                    method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.cancel_therapy_session',
+                    args: { therapy_session: session_name },
+                    freeze: true,
+                    callback: function(r) {
+                        if (r.message && r.message.status === 'Success') {
+                            frappe.show_alert({ message: __('Session cancelled'), indicator: 'green' }, 5);
+                            loadSchedList();
+                            if (page.main.find('#sched-calendar-view').is(':visible')) renderSchedCalendar();
+                        }
+                    }
+                });
+            }
+        );
+    }
+
+    function loadSchedList() {
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_scheduled_sessions',
+            args: { date: sched_filter_date.get_value() },
+            callback: function(r) {
+                renderSchedList(r.message || []);
+            }
+        });
+    }
+
+    function renderSchedList(sessions) {
+        const container = page.main.find('#sched-list-container');
+        if (!sessions.length) {
+            container.html(`
+                <div class="empty-state">
+                    <i class="fa fa-calendar-o"></i>
+                    <h4>${__('No Sessions')}</h4>
+                    <p>${__('No therapy sessions found for the selected date.')}</p>
+                </div>
+            `);
+            return;
+        }
+
+        let rows = '';
+        sessions.forEach(function(s, idx) {
+            const statusBadge = s.status === 'Completed'
+                ? '<span class="badge badge-success">Completed</span>'
+                : '<span class="badge badge-info">Scheduled</span>';
+            rows += `
+                <tr>
+                    <td>${idx + 1}</td>
+                    <td><strong>${s.patient_name}</strong><br><small>${s.patient}</small></td>
+                    <td>${s.therapy_type || '-'}</td>
+                    <td>${s.start_time ? s.start_time.substring(0,5) : '-'}</td>
+                    <td>${s.practitioner || '-'}</td>
+                    <td>${statusBadge}</td>
+                    <td>
+                        <div class="rehab-list-actions">
+                            ${s.status === 'Scheduled' ? `
+                                <button class="btn btn-success btn-sm btn-complete-session" data-name="${s.name}">
+                                    <i class="fa fa-check"></i> Complete
+                                </button>
+                                <button class="btn btn-danger btn-sm btn-cancel-session" data-name="${s.name}">
+                                    <i class="fa fa-times"></i>
+                                </button>
+                            ` : `
+                                <button class="btn btn-secondary btn-sm" disabled>
+                                    <i class="fa fa-check-circle"></i> Delivered
+                                </button>
+                            `}
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+
+        container.html(`
+            <table class="rehab-list-table">
+                <thead>
+                    <tr><th>#</th><th>Patient</th><th>Type</th><th>Time</th><th>Practitioner</th><th>Status</th><th>Actions</th></tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `);
+
+        container.find('.btn-complete-session').on('click', function() {
+            openCompleteSessionDialog($(this).data('name'));
+        });
+        container.find('.btn-cancel-session').on('click', function() {
+            cancelScheduledSession($(this).data('name'));
+        });
+    }
+
+    function renderSchedCalendar() {
+        const calContainer = page.main.find('#sched-calendar');
+        const firstDay = new Date(schedCalYear, schedCalMonth, 1);
+        const lastDay = new Date(schedCalYear, schedCalMonth + 1, 0);
+        const startDow = firstDay.getDay();
+        const daysInMonth = lastDay.getDate();
+        const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+        const calStart = new Date(schedCalYear, schedCalMonth, 1 - startDow);
+        const totalCells = Math.ceil((startDow + daysInMonth) / 7) * 7;
+        const calEnd = new Date(schedCalYear, schedCalMonth, 1 - startDow + totalCells - 1);
+
+        const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_scheduled_sessions',
+            args: { from_date: fmt(calStart), to_date: fmt(calEnd) },
+            callback: function(r) {
+                const sessions = r.message || [];
+                const byDate = {};
+                sessions.forEach(s => {
+                    if (!byDate[s.start_date]) byDate[s.start_date] = [];
+                    byDate[s.start_date].push(s);
+                });
+
+                const todayStr = frappe.datetime.get_today();
+
+                let headerHtml = `
+                    <div class="sched-cal-header">
+                        <button class="sched-cal-nav-btn" id="sched-cal-prev"><i class="fa fa-chevron-left"></i></button>
+                        <h5>${monthNames[schedCalMonth]} ${schedCalYear}</h5>
+                        <button class="sched-cal-nav-btn" id="sched-cal-next"><i class="fa fa-chevron-right"></i></button>
+                    </div>
+                `;
+
+                let gridHtml = '<div class="sched-cal-grid">';
+                const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+                dayNames.forEach(d => { gridHtml += `<div class="sched-cal-day-header">${d}</div>`; });
+
+                for (let i = 0; i < totalCells; i++) {
+                    const cellDate = new Date(schedCalYear, schedCalMonth, 1 - startDow + i);
+                    const dateStr = fmt(cellDate);
+                    const isOtherMonth = cellDate.getMonth() !== schedCalMonth;
+                    const isToday = dateStr === todayStr;
+
+                    let classes = 'sched-cal-day';
+                    if (isOtherMonth) classes += ' other-month';
+                    if (isToday) classes += ' today';
+
+                    let eventsHtml = '';
+                    if (byDate[dateStr]) {
+                        byDate[dateStr].forEach(s => {
+                            const statusClass = s.status === 'Completed' ? ' status-completed' : '';
+                            const timeStr = s.start_time ? s.start_time.substring(0,5) : '';
+                            eventsHtml += `<div class="sched-cal-event${statusClass}" data-name="${s.name}" data-status="${s.status}" title="${s.patient_name} - ${s.therapy_type} (${s.status})">${timeStr} ${s.patient_name}</div>`;
+                        });
+                    }
+
+                    gridHtml += `<div class="${classes}"><div class="sched-cal-day-num">${cellDate.getDate()}</div>${eventsHtml}</div>`;
+                }
+                gridHtml += '</div>';
+
+                calContainer.html(headerHtml + gridHtml);
+
+                calContainer.find('#sched-cal-prev').on('click', function() {
+                    schedCalMonth--;
+                    if (schedCalMonth < 0) { schedCalMonth = 11; schedCalYear--; }
+                    renderSchedCalendar();
+                });
+                calContainer.find('#sched-cal-next').on('click', function() {
+                    schedCalMonth++;
+                    if (schedCalMonth > 11) { schedCalMonth = 0; schedCalYear++; }
+                    renderSchedCalendar();
+                });
+                calContainer.find('.sched-cal-event').on('click', function() {
+                    const name = $(this).data('name');
+                    const status = $(this).data('status');
+                    if (status === 'Scheduled') {
+                        openCompleteSessionDialog(name);
+                    } else {
+                        frappe.set_route('Form', 'Therapy Session', name);
+                    }
+                });
+            }
+        });
+    }
+
+    // =============================================
+    // OUTCOME TRACKING - Record Assessment
+    // =============================================
+
+    function openRecordAssessmentDialog(patient, patient_name) {
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_assessment_templates',
+            callback: function(r) {
+                const templates = r.message || [];
+                if (!templates.length) {
+                    frappe.show_alert({ message: __('No Patient Assessment Templates are configured'), indicator: 'orange' }, 6);
+                    return;
+                }
+
+                const dialog = new frappe.ui.Dialog({
+                    title: __('Record Assessment: {0}', [patient_name]),
+                    size: 'large',
+                    fields: [
+                        {
+                            fieldtype: 'Select',
+                            fieldname: 'assessment_template',
+                            label: 'Assessment Template',
+                            options: templates.map(t => t.name),
+                            reqd: 1,
+                            onchange: function() { renderScoreInputs(); }
+                        },
+                        {
+                            fieldtype: 'HTML',
+                            fieldname: 'scores_html',
+                            options: '<div id="assessment-score-inputs"></div>'
+                        }
+                    ],
+                    primary_action_label: __('Save Assessment'),
+                    primary_action: function(values) {
+                        const template = templates.find(t => t.name === values.assessment_template);
+                        const scores = [];
+                        (template.parameters || []).forEach(function(param) {
+                            const input = dialog.$wrapper.find(`.score-input[data-param="${param}"]`);
+                            const val = input.val();
+                            if (val !== '' && val !== undefined) {
+                                scores.push({ parameter: param, score: parseInt(val) });
+                            }
+                        });
+                        if (!scores.length) {
+                            frappe.show_alert({ message: __('Please score at least one parameter'), indicator: 'orange' }, 5);
+                            return;
+                        }
+                        frappe.call({
+                            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.create_patient_assessment',
+                            args: {
+                                patient: patient,
+                                assessment_template: values.assessment_template,
+                                scores: JSON.stringify(scores)
+                            },
+                            freeze: true,
+                            freeze_message: __('Saving assessment...'),
+                            callback: function(r) {
+                                if (r.message && r.message.status === 'Success') {
+                                    frappe.show_alert({
+                                        message: __('Assessment saved. Score: {0}', [r.message.total_score_obtained]),
+                                        indicator: 'green'
+                                    }, 7);
+                                    dialog.hide();
+                                }
+                            },
+                            error: function(r) {
+                                frappe.show_alert({ message: r.message || __('Error saving assessment'), indicator: 'red' }, 10);
+                            }
+                        });
+                    }
+                });
+
+                function renderScoreInputs() {
+                    const template = templates.find(t => t.name === dialog.get_value('assessment_template'));
+                    if (!template) return;
+                    let html = '';
+                    (template.parameters || []).forEach(function(param) {
+                        html += `
+                            <div class="assessment-score-row">
+                                <span>${param}</span>
+                                <input type="number" class="form-control score-input" data-param="${param}" min="${template.scale_min != null ? template.scale_min : ''}" max="${template.scale_max != null ? template.scale_max : ''}" placeholder="${template.scale_min || 0}-${template.scale_max || 10}">
+                            </div>
+                        `;
+                    });
+                    dialog.$wrapper.find('#assessment-score-inputs').html(html);
+                }
+
+                dialog.show();
+                renderScoreInputs();
+            }
+        });
+    }
+
+    function viewAssessmentHistory(patient, patient_name) {
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_patient_assessments',
+            args: { patient: patient },
+            callback: function(r) {
+                const assessments = r.message || [];
+                let bodyHtml;
+                if (!assessments.length) {
+                    bodyHtml = `<p style="color:#6c757d;">${__('No assessments recorded yet for this patient.')}</p>`;
+                } else {
+                    bodyHtml = assessments.map(function(a) {
+                        return `
+                            <div class="assessment-history-row">
+                                <span>
+                                    <strong>${a.assessment_template}</strong>
+                                    <br><small style="color:#6c757d;">${frappe.datetime.str_to_user(a.assessment_datetime)}</small>
+                                </span>
+                                <span style="font-weight:600;">${a.total_score_obtained} / ${a.total_score}</span>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                const dialog = new frappe.ui.Dialog({
+                    title: __('Assessment History: {0}', [patient_name]),
+                    fields: [
+                        {
+                            fieldtype: 'HTML',
+                            fieldname: 'history_html',
+                            options: bodyHtml
+                        }
+                    ],
+                    primary_action_label: __('Record New Assessment'),
+                    primary_action: function() {
+                        dialog.hide();
+                        openRecordAssessmentDialog(patient, patient_name);
+                    }
+                });
+
+                dialog.show();
+            }
+        });
     }
 
     loadTherapies();
