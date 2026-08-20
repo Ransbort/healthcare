@@ -2332,6 +2332,26 @@ def get_custom_fields():
 				"reqd": 0,
 				"hidden": 0,
 			},
+			{
+				"fieldname": "front_desk_lab_roles",
+				"label": "Lab Tab Roles",
+				"fieldtype": "Small Text",
+				"insert_after": "front_desk_doctor_roles",
+				"default": "Laboratory User",
+				"reqd": 0,
+				"hidden": 0,
+				"description": "Who can see the Lab tab and mark predetermined lab work as sent to the doctor once complete.",
+			},
+			{
+				"fieldname": "front_desk_lab_override_roles",
+				"label": "Lab Tab Override Roles",
+				"fieldtype": "Small Text",
+				"insert_after": "front_desk_lab_roles",
+				"default": "Nursing User,Physician",
+				"reqd": 0,
+				"hidden": 0,
+				"description": "Who can send a patient to the Doctor Queue from the Lab tab before every required test is Completed (sample rejected, lab down, urgent case) - a reason is always required and recorded as a comment on the appointment.",
+			},
 		],
 
 		# Nurse-acceptance step for inpatient admissions (see

@@ -65,16 +65,40 @@ def _notify(event, payload):
 	to poll."""
 	frappe.publish_realtime(event=event, message=payload)
 
+
+def _route_after_vitals(appointment, appointment_type):
+	"""Extension point for an app layered on top of Healthcare (e.g.
+	sports_complex) to redirect an appointment somewhere other than
+	straight to the doctor queue once vitals are recorded - e.g. a
+	predetermined lab panel that has to complete first. Called from
+	save_vitals() below, right where queue_status would otherwise become
+	"With Doctor" unconditionally.
+
+	Returns True if some other app claimed this appointment and fully
+	handled the routing itself (queue_status + notification both done) -
+	False means save_vitals() should run its own default "With Doctor"
+	path, unchanged. A soft/lazy import keeps this file free of any hard
+	dependency on sports_complex (or any other app) being installed - a
+	site running plain Healthcare behaves exactly as it always has.
+	"""
+	try:
+		from sports_complex.sports_complex.healthcare_integration import route_trial_after_vitals
+	except ImportError:
+		return False
+
+	return bool(route_trial_after_vitals(appointment, appointment_type))
+
 # =============================================
 # TAB ACCESS CONTROL
 # =============================================
 
-FRONT_DESK_TABS = ["checkin", "queue", "nurse", "doctor"]
+FRONT_DESK_TABS = ["checkin", "queue", "nurse", "lab", "doctor"]
 
 TAB_ROLES_FIELD = {
 	"checkin": "front_desk_checkin_roles",
 	"queue": "front_desk_queue_roles",
 	"nurse": "front_desk_nurse_roles",
+	"lab": "front_desk_lab_roles",
 	"doctor": "front_desk_doctor_roles",
 }
 
@@ -82,6 +106,7 @@ TAB_LABEL = {
 	"checkin": _("Check-In"),
 	"queue": _("Queue"),
 	"nurse": _("Nurse Station"),
+	"lab": _("Lab"),
 	"doctor": _("Doctor Queue"),
 }
 
@@ -1106,6 +1131,7 @@ def get_queue(date=None, queue_status=None):
 
 	tab_for_status = {
 		"With Nurse": "nurse",
+		"With Lab": "lab",
 		"With Doctor": "doctor",
 	}
 	_require_tab_access(tab_for_status.get(queue_status, "queue"))
@@ -1370,14 +1396,18 @@ def save_vitals(
 	vitals_doc.insert(ignore_permissions=True)
 	vitals_doc.submit()
 
-	frappe.db.set_value("Patient Appointment", appointment, "queue_status", "With Doctor")
+	appointment_type = frappe.db.get_value("Patient Appointment", appointment, "appointment_type")
+	routed = _route_after_vitals(appointment, appointment_type)
 
-	patient_name = frappe.db.get_value("Patient Appointment", appointment, "patient_name")
-	_notify("queue_update", {
-		"department": "doctor",
-		"message": f"{patient_name} ready for consultation",
-		"encounter": None,
-	})
+	if not routed:
+		frappe.db.set_value("Patient Appointment", appointment, "queue_status", "With Doctor")
+
+		patient_name = frappe.db.get_value("Patient Appointment", appointment, "patient_name")
+		_notify("queue_update", {
+			"department": "doctor",
+			"message": f"{patient_name} ready for consultation",
+			"encounter": None,
+		})
 
 	return {"status": "Success"}
 

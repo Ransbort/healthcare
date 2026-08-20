@@ -46,6 +46,9 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		if (data.department === 'nurse' && page.main.find('#nurse-tab').hasClass('active')) {
 			loadNurseQueue();
 		}
+		if (data.department === 'laboratory' && page.main.find('#lab-tab').hasClass('active')) {
+			loadLabQueue();
+		}
 		if (data.department === 'doctor' && page.main.find('#doctor-tab').hasClass('active')) {
 			loadDoctorQueue();
 		}
@@ -116,6 +119,10 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			.queue-table th { padding: 12px; text-align: left; font-weight: 600; font-size: 0.9rem; }
 			.queue-table td { padding: 12px; font-size: 0.9rem; border-bottom: 1px solid #e9ecef; }
 			.queue-table tbody tr:hover { background: #f8f9fa; }
+
+			.lab-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; margin: 1px 3px 1px 0; }
+			.lab-pill-done { background: #d4edda; color: #155724; }
+			.lab-pill-pending { background: #fff3cd; color: #856404; }
 
 			.badge-registered { background: #e2e3e5; color: #383d41; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-pending { background: #fff3cd; color: #856404; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
@@ -203,6 +210,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 				<button class="tab-btn active" data-tab="checkin"><i class="fa fa-user-plus"></i> Check-In</button>
 				<button class="tab-btn" data-tab="queue"><i class="fa fa-list"></i> Queue</button>
 				<button class="tab-btn" data-tab="nurse"><i class="fa fa-stethoscope"></i> Nurse Station</button>
+				<button class="tab-btn" data-tab="lab"><i class="fa fa-flask"></i> Lab</button>
 				<button class="tab-btn" data-tab="doctor"><i class="fa fa-user-md"></i> Doctor Queue</button>
 			</div>
 
@@ -286,6 +294,15 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 				<div class="queue-table-container" id="nurse-table-container"></div>
 			</div>
 
+			<!-- LAB TAB -->
+			<div class="tab-content" id="lab-tab">
+				<div class="filter-bar">
+					<div data-fieldname="l_date"></div>
+					<button class="btn btn-primary" id="lab-refresh-btn"><i class="fa fa-refresh"></i> Refresh</button>
+				</div>
+				<div class="queue-table-container" id="lab-table-container"></div>
+			</div>
+
 			<!-- DOCTOR QUEUE TAB -->
 			<div class="tab-content" id="doctor-tab">
 				<div class="filter-bar">
@@ -311,7 +328,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	}
 
 	withServerToday(function(serverToday) {
-		[ci_date, q_date, n_date, d_date].forEach(function(ctrl) {
+		[ci_date, q_date, n_date, l_date, d_date].forEach(function(ctrl) {
 			if (ctrl) ctrl.set_value(serverToday);
 		});
 	});
@@ -473,12 +490,12 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		callback: function(r) {
 			autoGeneratePatientUid = !!(r.message && r.message.auto_generate_patient_uid);
 			setUidFieldMode();
-			applyTabAccess((r.message && r.message.allowed_tabs) || ['checkin', 'queue', 'nurse', 'doctor']);
+			applyTabAccess((r.message && r.message.allowed_tabs) || ['checkin', 'queue', 'nurse', 'lab', 'doctor']);
 		}
 	});
 
 	function applyTabAccess(allowedTabs) {
-		const allTabs = ['checkin', 'queue', 'nurse', 'doctor'];
+		const allTabs = ['checkin', 'queue', 'nurse', 'lab', 'doctor'];
 
 		allTabs.forEach(function(tab) {
 			if (allowedTabs.indexOf(tab) === -1) {
@@ -502,6 +519,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 
 				if (firstAllowed === 'queue') withServerToday(function(t) { q_date.set_value(t); loadQueue(); });
 				if (firstAllowed === 'nurse') withServerToday(function(t) { n_date.set_value(t); loadNurseQueue(); });
+				if (firstAllowed === 'lab') withServerToday(function(t) { l_date.set_value(t); loadLabQueue(); });
 				if (firstAllowed === 'doctor') withServerToday(function(t) { d_date.set_value(t); loadDoctorQueue(); });
 			}
 		}
@@ -1039,6 +1057,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		page.main.find(`#${tab}-tab`).addClass('active');
 		if (tab === 'queue') withServerToday(function(t) { q_date.set_value(t); loadQueue(); });
 		if (tab === 'nurse') withServerToday(function(t) { n_date.set_value(t); loadNurseQueue(); });
+		if (tab === 'lab') withServerToday(function(t) { l_date.set_value(t); loadLabQueue(); });
 		if (tab === 'doctor') withServerToday(function(t) { d_date.set_value(t); loadDoctorQueue(); });
 	});
 
@@ -1307,6 +1326,110 @@ function loadQueue() {
 	}
 
 	// =============================================
+	// LAB TAB
+	// =============================================
+	let l_date = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="l_date"]'),
+		df: { fieldtype: 'Date', fieldname: 'l_date', label: 'Date', default: frappe.datetime.get_today() },
+		render_input: true
+	});
+	l_date.refresh();
+	l_date.set_value(frappe.datetime.get_today());
+
+	page.main.find('#lab-refresh-btn').on('click', function() { loadLabQueue(); });
+
+	function loadLabQueue() {
+		frappe.call({
+			method: 'sports_complex.sports_complex.healthcare_integration.get_trial_lab_queue',
+			args: { date: l_date.get_value() },
+			callback: function(r) { renderLabTable(r.message || []); }
+		});
+	}
+
+	function renderLabTable(rows) {
+		const container = page.main.find('#lab-table-container');
+		if (!rows.length) {
+			container.html(`<div class="empty-state"><i class="fa fa-flask"></i><h4>${__('No trialists waiting on labs')}</h4></div>`);
+			return;
+		}
+		let body = '';
+		rows.forEach(function(row) {
+			const testPills = (row.tests || []).map(function(t) {
+				const cls = t.status === 'Completed' ? 'lab-pill-done' : 'lab-pill-pending';
+				return `<span class="lab-pill ${cls}">${frappe.utils.escape_html(t.template)}: ${frappe.utils.escape_html(t.status)}</span>`;
+			}).join(' ');
+			const ready = !!row.ready_for_doctor;
+			const btnClass = ready ? 'btn-success' : 'btn-warning';
+			const btnLabel = ready ? __('Send to Doctor') : __('Send to Doctor (Override)');
+			body += `
+				<tr>
+					<td>${row.encounter_time || ''}</td>
+					<td>${row.patient_name || ''}</td>
+					<td>${row.practitioner_name || row.practitioner || ''}</td>
+					<td><small>${testPills || __('No tests configured')}</small></td>
+					<td>${row.tests_completed || 0}/${row.tests_total || 0}</td>
+					<td><button class="btn btn-xs ${btnClass} btn-send-doctor" data-name="${row.name}" data-ready="${ready ? '1' : '0'}">${btnLabel}</button></td>
+				</tr>
+			`;
+		});
+		container.html(`
+			<table class="queue-table">
+				<thead><tr><th>${__('Time')}</th><th>${__('Patient')}</th><th>${__('Practitioner')}</th><th>${__('Required Tests')}</th><th>${__('Progress')}</th><th></th></tr></thead>
+				<tbody>${body}</tbody>
+			</table>
+		`);
+
+		container.find('.btn-send-doctor').on('click', function() {
+			const name = $(this).data('name');
+			const ready = $(this).data('ready') === 1 || $(this).data('ready') === '1';
+
+			if (ready) {
+				sendTrialToDoctor(name, null);
+				return;
+			}
+
+			// Not every required test is Completed yet - this only
+			// succeeds server-side for a user with lab override
+			// permission (front_desk_lab_override_roles in Healthcare
+			// Settings); everyone else gets a clear permission error back
+			// from the call below. A reason is always required.
+			const dialog = new frappe.ui.Dialog({
+				title: __('Send to Doctor Before Labs Are Complete'),
+				fields: [
+					{
+						fieldtype: 'Small Text',
+						fieldname: 'reason',
+						label: __('Reason'),
+						reqd: 1,
+						description: __('Recorded as a comment on the appointment.')
+					}
+				],
+				primary_action_label: __('Send Anyway'),
+				primary_action: function(values) {
+					dialog.hide();
+					sendTrialToDoctor(name, values.reason);
+				}
+			});
+			dialog.show();
+		});
+	}
+
+	function sendTrialToDoctor(appointment, overrideReason) {
+		frappe.call({
+			method: 'sports_complex.sports_complex.healthcare_integration.send_trial_to_doctor',
+			args: { appointment: appointment, override_reason: overrideReason },
+			freeze: true,
+			freeze_message: __('Sending to doctor...'),
+			callback: function(r) {
+				if (r.message && r.message.status === 'Success') {
+					frappe.show_alert({ message: __('Sent to doctor'), indicator: 'green' }, 5);
+					loadLabQueue();
+				}
+			}
+		});
+	}
+
+	// =============================================
 	// DOCTOR QUEUE TAB
 	// =============================================
 	let d_date = frappe.ui.form.make_control({
@@ -1349,6 +1472,7 @@ function loadQueue() {
 					<td>${row.encounter_time || ''}</td>
 					<td>${row.patient_name || ''}</td>
 					<td>${row.practitioner_name || row.practitioner || ''}</td>
+					<td>${row.appointment_type || ''}</td>
 					<td><small>${vitalsSummary}</small></td>
 					<td><button class="btn btn-xs btn-success btn-start-consult" data-name="${row.name}">${__('Start Consultation')}</button></td>
 				</tr>
@@ -1356,7 +1480,7 @@ function loadQueue() {
 		});
 		container.html(`
 			<table class="queue-table">
-				<thead><tr><th>${__('Time')}</th><th>${__('Patient')}</th><th>${__('Practitioner')}</th><th>${__('Vitals')}</th><th></th></tr></thead>
+				<thead><tr><th>${__('Time')}</th><th>${__('Patient')}</th><th>${__('Practitioner')}</th><th>${__('Appointment Type')}</th><th>${__('Vitals')}</th><th></th></tr></thead>
 				<tbody>${body}</tbody>
 			</table>
 		`);
