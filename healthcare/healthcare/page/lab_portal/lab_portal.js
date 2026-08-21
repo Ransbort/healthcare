@@ -868,6 +868,24 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         openNewLabRequestDialog();
     });
 
+    // Front desk's access to "New Lab Request" specifically can be turned
+    // off via Healthcare Settings (front_desk_lab_requests_enabled) -
+    // Laboratory User/System Manager are never affected, so only bother
+    // asking the server when the current user might actually be gated
+    // (mirrors _is_front_desk_only() in lab_portal.py). Hiding the button
+    // is a UX nicety only - create_lab_request() enforces this for real.
+    if (!frappe.user.has_role('Laboratory User') && !frappe.user.has_role('System Manager')
+        && frappe.user.has_role('Healthcare Receptionist')) {
+        frappe.call({
+            method: 'healthcare.healthcare.page.lab_portal.lab_portal.get_front_desk_lab_request_access',
+            callback: function(r) {
+                if (!r.message) {
+                    page.main.find('#new-lab-request-btn').hide();
+                }
+            }
+        });
+    }
+
     // Direct lab requests: no Patient Encounter / Lab Prescription involved.
     // Creates a standalone Draft Lab Test via create_lab_request(), which
     // then shows up in the Requested tab alongside encounter-sourced rows

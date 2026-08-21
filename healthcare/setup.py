@@ -2352,6 +2352,32 @@ def get_custom_fields():
 				"hidden": 0,
 				"description": "Who can send a patient to the Doctor Queue from the Lab tab before every required test is Completed (sample rejected, lab down, urgent case) - a reason is always required and recorded as a comment on the appointment.",
 			},
+			{
+				"fieldname": "lab_portal_access_section",
+				"label": "Lab Portal - Front Desk Access",
+				"fieldtype": "Section Break",
+				"insert_after": "front_desk_lab_override_roles",
+				"collapsible": 1,
+				"description": (
+					"Controls whether Healthcare Receptionist can use Lab Portal's "
+					"'New Request' action to create a standalone Lab Test for a "
+					"walk-in with no appointment or doctor's encounter (see "
+					"lab_portal.create_lab_request()). This is separate from the "
+					"Front Desk Tab Access settings above - it's about the Lab "
+					"Portal page, not the Front Desk page's own Lab tab. Laboratory "
+					"User and System Manager can always create direct lab requests "
+					"regardless of this setting."
+				),
+			},
+			{
+				"fieldname": "front_desk_lab_requests_enabled",
+				"label": "Front Desk Can Create Direct Lab Requests",
+				"fieldtype": "Check",
+				"insert_after": "lab_portal_access_section",
+				"default": "1",
+				"reqd": 0,
+				"hidden": 0,
+			},
 		],
 
 		# Nurse-acceptance step for inpatient admissions (see

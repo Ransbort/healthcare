@@ -8,11 +8,19 @@ Two request sources feed each tab:
      Requested Labs until a lab scientist accepts it into a Lab Test +
      Sales Invoice via accept_lab_request().
   2. Direct-sourced: a standalone Lab Test with no Patient Encounter,
-     created via create_lab_request() by a lab scientist who doesn't
-     need a doctor's encounter/prescription first. Since creating it IS
-     the lab scientist's acceptance, it's invoiced immediately on
-     creation and goes straight to Pending Labs, skipping Requested Labs
-     entirely. Identified by Lab Test.prescription IS NULL.
+     created via create_lab_request() by a lab scientist or a front-desk
+     receptionist (Laboratory User / Healthcare Receptionist - see this
+     page's roles in lab_portal.json) for a walk-in who wants a lab test
+     without seeing a doctor first and isn't going through Front Desk's
+     own check-in/appointment flow at all. Since creating it IS the
+     acceptance, it's invoiced immediately on creation and goes straight
+     to Pending Labs, skipping Requested Labs entirely. Identified by
+     Lab Test.prescription IS NULL. Healthcare Receptionist's access to
+     this action specifically (not Laboratory User's, which is always
+     on) can be switched off via Healthcare Settings.
+     front_desk_lab_requests_enabled - see _is_front_desk_only()/
+     _front_desk_lab_requests_enabled()/get_front_desk_lab_request_access()
+     below.
 
 Both are queried separately (different columns) then normalized to a common
 row shape with a `source` field ("encounter" | "direct") so the frontend
@@ -146,19 +154,68 @@ def get_lab_test_templates():
 	return templates
 
 
+def _is_front_desk_only(user=None):
+	"""True when the user's only reason to be in Lab Portal at all is
+	Healthcare Receptionist - i.e. they aren't also Laboratory User or
+	System Manager, who can always create direct lab requests regardless
+	of front_desk_lab_requests_enabled.
+	"""
+	roles = set(frappe.get_roles(user))
+	if "Laboratory User" in roles or "System Manager" in roles:
+		return False
+	return "Healthcare Receptionist" in roles
+
+
+def _front_desk_lab_requests_enabled():
+	"""Healthcare Settings > Lab Portal - Front Desk Access >
+	Front Desk Can Create Direct Lab Requests (see setup.py). Only
+	consulted for front-desk-only users - see _is_front_desk_only().
+	"""
+	return bool(frappe.db.get_single_value("Healthcare Settings", "front_desk_lab_requests_enabled"))
+
+
+@frappe.whitelist()
+def get_front_desk_lab_request_access():
+	"""Whitelisted so lab_portal.js can decide up front whether to show
+	the current user the 'New Request' action at all, instead of letting
+	them fill out the dialog and only then hitting create_lab_request()'s
+	PermissionError.
+	"""
+	if not _is_front_desk_only():
+		return True
+	return _front_desk_lab_requests_enabled()
+
+
 @frappe.whitelist()
 def create_lab_request(patient, lab_test_code, lab_test_comment=None):
-	"""Create a Lab Test requested directly by a lab scientist, with no
-	Patient Encounter involved. Unlike encounter-sourced requests (which
-	sit in Requested Labs until a lab scientist accepts them), a direct
-	request IS the lab scientist's own acceptance - so it's invoiced
-	immediately here and goes straight to Pending Labs (awaiting payment)
-	rather than through Requested Labs.
+	"""Create a Lab Test requested directly by a lab scientist or a
+	front-desk receptionist (page-level access: Laboratory User,
+	Healthcare Receptionist, System Manager - see lab_portal.json), with
+	no Patient Encounter involved. Unlike encounter-sourced requests
+	(which sit in Requested Labs until a lab scientist accepts them), a
+	direct request IS its own acceptance - so it's invoiced immediately
+	here and goes straight to Pending Labs (awaiting payment) rather than
+	through Requested Labs.
+
+	Healthcare Receptionist's access to this specific action is gated by
+	Healthcare Settings.front_desk_lab_requests_enabled (default on) -
+	see _is_front_desk_only()/_front_desk_lab_requests_enabled() above.
+	Laboratory User and System Manager are never affected by that
+	setting.
 	"""
 	if not patient:
 		frappe.throw(_("Please select a patient"))
 	if not lab_test_code:
 		frappe.throw(_("Please select a lab test"))
+	if _is_front_desk_only() and not _front_desk_lab_requests_enabled():
+		frappe.throw(
+			_(
+				"Front Desk is not currently permitted to create direct lab "
+				"requests. Ask a Laboratory User, or enable this under "
+				"Healthcare Settings > Lab Portal - Front Desk Access."
+			),
+			frappe.PermissionError,
+		)
 
 	patient_doc = frappe.get_doc("Patient", patient)
 

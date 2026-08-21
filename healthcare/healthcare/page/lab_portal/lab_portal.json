@@ -10,7 +10,17 @@
  "name": "lab-portal",
  "owner": "Administrator",
  "page_name": "lab-portal",
- "roles": [],
+ "roles": [
+  {
+   "role": "Laboratory User"
+  },
+  {
+   "role": "Healthcare Receptionist"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
  "standard": "Yes",
  "system_page": 0,
  "title": "Lab Portal"
