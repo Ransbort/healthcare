@@ -52,6 +52,23 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 		loadAll();
 	});
 
+	// Admission Order accept/reject outcome, targeted (server-side, via
+	// frappe.publish_realtime's user= param - see admission_order.py's
+	// _notify_referring_practitioner()) at just the practitioner who
+	// placed the order, not a department-wide broadcast. Only reaches
+	// this doctor if they currently have Doctor Station open; either way
+	// they also get a standard Notification Log (bell icon) entry, so
+	// this is a bonus toast, not the only way they'd find out. No
+	// loadAll() here - Doctor Station has no admission-order-related tab
+	// of its own to refresh.
+	frappe.realtime.on('admission_order_response', function(data) {
+		playNotification();
+		frappe.show_alert({
+			message: data.message,
+			indicator: 'blue'
+		}, 6);
+	});
+
 	// =============================================
 	// STYLES - same visual language as Laboratory Portal / Nurse Station
 	// (toolbar with icon badge, card-style search sections, tabs with

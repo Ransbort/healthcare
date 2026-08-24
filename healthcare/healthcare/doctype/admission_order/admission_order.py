@@ -45,6 +45,94 @@ def _notify(event, payload):
 	frappe.publish_realtime(event=event, message=payload)
 
 
+def _resolve_practitioner_user(practitioner):
+	"""Best-effort: the Frappe User login linked to a Healthcare
+	Practitioner, so an accept/reject outcome can reach the actual doctor
+	who placed the order - not just sit as a comment on the Admission
+	Order document they'd have to go looking for.
+
+	Looked up defensively via frappe.get_meta() rather than assuming a
+	hard-coded fieldname (e.g. "user_id") - Healthcare Practitioner is
+	core Healthcare code, this app's own source tree has no local copy of
+	its doctype JSON to check against directly. Returns the first
+	Link-to-User field found, or None if the practitioner isn't set, the
+	field can't be found, or it isn't linked to an enabled user."""
+	if not practitioner:
+		return None
+
+	try:
+		meta = frappe.get_meta("Healthcare Practitioner")
+	except Exception:
+		return None
+
+	fieldname = None
+	for df in meta.get("fields", []):
+		if df.fieldtype == "Link" and df.options == "User":
+			fieldname = df.fieldname
+			break
+	if not fieldname:
+		return None
+
+	user = frappe.db.get_value("Healthcare Practitioner", practitioner, fieldname)
+	if user and user not in ("Administrator", "Guest") and frappe.db.get_value("User", user, "enabled"):
+		return user
+	return None
+
+
+def _notify_referring_practitioner(doc, outcome, reason=None):
+	"""Tell the doctor who placed this Admission Order that a nurse has
+	accepted or rejected it - accept_admission_order()/reject_admission_order()
+	below previously only left a comment on the document, which the
+	ordering doctor would never see unless they happened to reopen it.
+
+	Prefers referring_practitioner (whoever placed the order from the
+	Patient Encounter) and falls back to primary_practitioner if that's
+	blank. Silently does nothing if neither resolves to an enabled user -
+	same "best-effort, never block the actual accept/reject" spirit as
+	notify_nursing_team()'s own try/except below."""
+	practitioner = doc.referring_practitioner or doc.primary_practitioner
+	user = _resolve_practitioner_user(practitioner)
+	if not user:
+		return
+
+	if outcome == "Accepted":
+		message = _("Your admission order for {0} was accepted - the Inpatient Record has been created").format(
+			doc.patient_name or doc.patient
+		)
+	else:
+		message = _("Your admission order for {0} was rejected: {1}").format(
+			doc.patient_name or doc.patient, reason or _("no reason given")
+		)
+
+	# Scoped to just this one user (unlike notify_nursing_team()'s
+	# department-wide broadcast) - this is only relevant to the doctor who
+	# placed the order, not every doctor in the department. Picked up by
+	# doctor_station.js if they currently have that page open; either way
+	# the Notification Log entry below still reaches them via the bell
+	# icon.
+	frappe.publish_realtime(
+		event="admission_order_response",
+		message={"message": message},
+		user=user,
+	)
+
+	try:
+		from frappe.desk.doctype.notification_log.notification_log import (
+			enqueue_create_notification,
+		)
+
+		notification_doc = {
+			"type": "Alert",
+			"document_type": doc.doctype,
+			"document_name": doc.name,
+			"subject": message,
+			"from_user": frappe.session.user,
+		}
+		enqueue_create_notification([user], notification_doc)
+	except Exception:
+		frappe.log_error(title="Failed to notify referring practitioner of Admission Order outcome")
+
+
 def notify_nursing_team(doc):
 	"""Send an in-app notification to every user with the Nursing User role,
 	plus a realtime sound/toast at Nurse Station - same "department": "nurse"
@@ -216,6 +304,7 @@ def accept_admission_order(admission_order):
 
 	_clear_pending_admission_order(doc.admission_encounter, doc.name)
 	doc.add_comment("Info", _("Accepted by {0}").format(frappe.utils.get_fullname()))
+	_notify_referring_practitioner(doc, "Accepted")
 	return doc.name
 
 
@@ -234,4 +323,5 @@ def reject_admission_order(admission_order, reason=None):
 	doc.db_set("rejection_reason", reason)
 	_clear_pending_admission_order(doc.admission_encounter, doc.name)
 	doc.add_comment("Info", _("Rejected by {0}: {1}").format(frappe.utils.get_fullname(), reason or ""))
+	_notify_referring_practitioner(doc, "Rejected", reason)
 	return doc.name

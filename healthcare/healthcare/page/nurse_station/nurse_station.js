@@ -675,6 +675,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 					<td>${order.primary_practitioner_name || order.primary_practitioner || ''}</td>
 					<td>${order.admission_ordered_for || ''}</td>
 					<td>${order.admission_service_unit_type || ''}</td>
+					<td>${order.expected_length_of_stay || order.expected_length_of_stay === 0 ? order.expected_length_of_stay : ''}</td>
 					<td>
 						<button class="btn btn-xs btn-success btn-accept-admission" data-name="${order.name}">${__('Accept')}</button>
 						<button class="btn btn-xs btn-default btn-reject-admission" data-name="${order.name}">${__('Reject')}</button>
@@ -691,6 +692,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 						<th>${__('Practitioner')}</th>
 						<th>${__('Ordered For')}</th>
 						<th>${__('Service Unit')}</th>
+						<th title="${__('Expected Length of Stay')}">${__('ELoS')}</th>
 						<th></th>
 					</tr>
 				</thead>
