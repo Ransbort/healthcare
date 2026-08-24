@@ -77,20 +77,31 @@ def _notify(event, payload):
 # same queue_status/custom_nurse_queue_dismissed fields via send_to_nurse()/
 # bulk_send_to_nurse() below - those stayed, since they're triggered from
 # Queue, not from what's now Nurse Station's own page.
-FRONT_DESK_TABS = ["checkin", "queue", "lab", "doctor"]
+#
+# Doctor Queue moved out the same way, to its own page (healthcare/
+# healthcare/page/doctor_station) - see doctor_station.py for
+# get_doctor_queue()/start_consultation(), which used to live here.
+# get_queue() below stays - it's still Front Desk's own generic Queue tab
+# (everything checked in today, whatever status), not doctor-specific.
+#
+# The Lab tab followed the Doctor Queue tab out to Doctor Station too -
+# it was never actually gated through _require_tab_access()/this dict
+# though (its data comes from sports_complex's own get_trial_lab_queue()/
+# send_trial_to_doctor(), which read Healthcare Settings' front_desk_lab_
+# roles/front_desk_lab_override_roles directly - see
+# healthcare_integration.py's user_can_access_lab_tab()), so removing it
+# here is just dropping it from the client-side allowed_tabs list; no
+# whitelisted method here ever depended on "lab" being a key in this dict.
+FRONT_DESK_TABS = ["checkin", "queue"]
 
 TAB_ROLES_FIELD = {
 	"checkin": "front_desk_checkin_roles",
 	"queue": "front_desk_queue_roles",
-	"lab": "front_desk_lab_roles",
-	"doctor": "front_desk_doctor_roles",
 }
 
 TAB_LABEL = {
 	"checkin": _("Check-In"),
 	"queue": _("Queue"),
-	"lab": _("Lab"),
-	"doctor": _("Doctor Queue"),
 }
 
 
@@ -1126,12 +1137,17 @@ def _send_registration_email(patient_doc):
 @frappe.whitelist()
 def get_queue(date=None, queue_status=None):
 
-	tab_for_status = {
-		"With Nurse": "nurse",
-		"With Lab": "lab",
-		"With Doctor": "doctor",
-	}
-	_require_tab_access(tab_for_status.get(queue_status, "queue"))
+	# queue_status used to pick which Front Desk tab this call was gated
+	# against ("With Nurse" -> nurse, "With Lab" -> lab, "With Doctor" ->
+	# doctor) - all three have since moved out to their own pages
+	# (nurse_station.py/doctor_station.py gate their own queue-fetching
+	# methods independently; Doctor Station's Lab tab reads Healthcare
+	# Settings' front_desk_lab_roles directly via sports_complex's
+	# user_can_access_lab_tab(), never through this dict at all). This is
+	# Front Desk's own generic Queue tab now, whatever queue_status is
+	# passed in only ever filters the result - it's not tied to a
+	# specific tab anymore.
+	_require_tab_access("queue")
 
 	date = date or nowdate()
 
@@ -1322,82 +1338,15 @@ def send_to_nurse(appointment):
 	return {"status": "Success"}
 
 
-# =============================================
-# DOCTOR QUEUE
-# =============================================
-
-@frappe.whitelist()
-def start_consultation(appointment):
-	_require_tab_access("doctor")
-	"""Practitioner is ready to see this patient - this is where the
-	Patient Encounter actually gets created (not at check-in), pre-filled
-	from the appointment. Queue tracking keeps living on the Patient
-	Appointment right through to Completed - see on_patient_encounter_submit()
-	below."""
-
-	appt = frappe.get_doc("Patient Appointment", appointment)
-
-	# Idempotency: if this appointment somehow already has an Encounter
-	# (e.g. a double-click), reuse it instead of creating a second one.
-	existing = frappe.db.get_value("Patient Encounter", {"appointment": appt.name}, "name")
-	if existing:
-		frappe.db.set_value("Patient Appointment", appointment, "queue_status", "In Consultation")
-		return {
-			"status": "Success",
-			"patient": appt.patient,
-			"practitioner": appt.practitioner,
-			"encounter": existing,
-		}
-
-	patient_name, practitioner_name = _patient_and_practitioner_names(appt.patient, appt.practitioner)
-
-	encounter = frappe.get_doc({
-		"doctype": "Patient Encounter",
-		"patient": appt.patient,
-		"patient_name": patient_name,
-		"practitioner": appt.practitioner,
-		"practitioner_name": practitioner_name,
-		"medical_department": appt.department,
-		# Patient Encounter has appointment_type as a mandatory field of
-		# its own — inherit it from the booking rather than asking the
-		# doctor to re-enter something already captured.
-		"appointment_type": appt.appointment_type,
-		"appointment": appt.name,
-		"encounter_date": nowdate(),
-		"encounter_time": nowtime(),
-	})
-	encounter.insert(ignore_permissions=True)
-	# Patient Encounter's own on_update() (see patient_encounter.py, not
-	# customized here) closes the Patient Appointment the moment
-	# `appointment` is set on an inserted/saved Encounter - nothing extra
-	# needed here for that.
-
-	# Link whatever vitals the nurse already recorded against the
-	# appointment back to the new Encounter too, so anything that expects
-	# vitals to be reachable from the Encounter side (print formats,
-	# reports) still finds them.
-	frappe.db.set_value(
-		"Vital Signs",
-		{"appointment": appt.name, "docstatus": 1},
-		"encounter",
-		encounter.name,
-	)
-
-	frappe.db.set_value("Patient Appointment", appointment, "queue_status", "In Consultation")
-
-	return {
-		"status": "Success",
-		"patient": encounter.patient,
-		"practitioner": encounter.practitioner,
-		"encounter": encounter.name,
-	}
-
-
 def on_patient_encounter_submit(doc, method=None):
 	"""Doctor completes + submits the Encounter -> the linked Patient
 	Appointment's queue_status becomes Completed. Queue state lives on
 	the Appointment for the whole visit now, not on the Encounter - see
-	start_consultation() above for where the Encounter gets created."""
+	doctor_station.py's start_consultation() for where the Encounter gets
+	created (moved out of this file to Doctor Station's own page - this
+	hook stays here since it's a Patient Encounter lifecycle concern,
+	registered via hooks.py's doc_events regardless of which page created
+	the Encounter)."""
 
 	if doc.appointment:
 		frappe.db.set_value("Patient Appointment", doc.appointment, "queue_status", "Completed")

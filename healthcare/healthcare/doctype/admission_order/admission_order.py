@@ -37,8 +37,32 @@ def _clear_pending_admission_order(encounter, admission_order):
 		frappe.db.set_value("Patient Encounter", encounter, "custom_pending_admission_order", None)
 
 
+def _notify(event, payload):
+	"""Broadcast a realtime event to everyone listening in this site - same
+	private-copy pattern lab_portal.py/rehab_portal.py/front_desk.py/
+	nurse_station.py each keep for their own sound/toast notifications,
+	rather than a shared import."""
+	frappe.publish_realtime(event=event, message=payload)
+
+
 def notify_nursing_team(doc):
-	"""Send an in-app notification to every user with the Nursing User role."""
+	"""Send an in-app notification to every user with the Nursing User role,
+	plus a realtime sound/toast at Nurse Station - same "department": "nurse"
+	queue_update contract front_desk.py's send_to_nurse() already uses, so
+	Nurse Station's existing realtime handler picks this up automatically
+	(it also refreshes its own pending-admission-orders list on this event -
+	see nurse_station.js). Fired unconditionally, independent of the
+	Has Role lookup below, so a nurse with the page open live still gets the
+	toast even on a site where no user happens to carry the Nursing User
+	role yet."""
+	_notify("queue_update", {
+		"department": "nurse",
+		"message": _("New admission order for {0} awaiting acceptance").format(
+			doc.patient_name or doc.patient
+		),
+		"encounter": None,
+	})
+
 	nurses = frappe.get_all(
 		"Has Role",
 		filters={"role": NURSE_ROLE, "parenttype": "User"},

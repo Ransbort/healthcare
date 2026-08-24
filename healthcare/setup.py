@@ -2091,12 +2091,12 @@ def get_custom_fields():
 		],
 		# Front Desk: drives the walk-in patient journey (receptionist ->
 		# nurse -> doctor). front_desk.py's create_consultation()/
-		# get_queue()/send_to_nurse()/start_consultation() and
-		# nurse_station.py's save_vitals()/get_nurse_queue()/
-		# clear_nurse_queue() all read/write these fields directly -
-		# without them, get_queue() throws "Unknown column 'queue_status'"
-		# (as seen when this was tried as a standalone fixture instead of
-		# going through make_custom_fields()).
+		# get_queue()/send_to_nurse(), nurse_station.py's save_vitals()/
+		# get_nurse_queue()/clear_nurse_queue(), and doctor_station.py's
+		# start_consultation()/get_doctor_queue() all read/write these
+		# fields directly - without them, get_queue() throws "Unknown
+		# column 'queue_status'" (as seen when this was tried as a
+		# standalone fixture instead of going through make_custom_fields()).
 		"Patient Appointment": [
 			{
 				"fieldname": "queue_status",
@@ -2309,9 +2309,14 @@ def get_custom_fields():
 				"insert_after": "patient_uid_naming_series",
 				"collapsible": 1,
 				"description": (
-					"Comma-separated Role lists controlling which Front Desk tabs "
-					"each tab is restricted to. Leave a field blank to leave that "
-					"tab open to anyone with Front Desk page access."
+					"Comma-separated Role lists controlling tab/page access "
+					"across the walk-in journey. Check-In and Queue are still "
+					"Front Desk's own tabs; Nurse Station, Doctor Station, and "
+					"Doctor Station's Lab tab moved out to their own pages "
+					"but their role settings stayed grouped here for "
+					"convenience. Leave a field blank to leave that tab/page "
+					"open to anyone who can already reach it via its own "
+					"Page.roles."
 				),
 			},
 			{
@@ -2346,7 +2351,7 @@ def get_custom_fields():
 			},
 			{
 				"fieldname": "front_desk_doctor_roles",
-				"label": "Doctor Queue Tab Roles",
+				"label": "Doctor Station Tab Roles",
 				"fieldtype": "Small Text",
 				"insert_after": "front_desk_nurse_roles",
 				"default": "Physician",
@@ -2355,23 +2360,23 @@ def get_custom_fields():
 			},
 			{
 				"fieldname": "front_desk_lab_roles",
-				"label": "Lab Tab Roles",
+				"label": "Doctor Station Lab Tab Roles",
 				"fieldtype": "Small Text",
 				"insert_after": "front_desk_doctor_roles",
 				"default": "Laboratory User",
 				"reqd": 0,
 				"hidden": 0,
-				"description": "Who can see the Lab tab and mark predetermined lab work as sent to the doctor once complete.",
+				"description": "Who can see Doctor Station's Lab tab and mark predetermined lab work as sent to the doctor once complete.",
 			},
 			{
 				"fieldname": "front_desk_lab_override_roles",
-				"label": "Lab Tab Override Roles",
+				"label": "Doctor Station Lab Override Roles",
 				"fieldtype": "Small Text",
 				"insert_after": "front_desk_lab_roles",
 				"default": "Nursing User,Physician",
 				"reqd": 0,
 				"hidden": 0,
-				"description": "Who can send a patient to the Doctor Queue from the Lab tab before every required test is Completed (sample rejected, lab down, urgent case) - a reason is always required and recorded as a comment on the appointment.",
+				"description": "Who can send a patient to the Doctor Queue from Doctor Station's Lab tab before every required test is Completed (sample rejected, lab down, urgent case) - a reason is always required and recorded as a comment on the appointment.",
 			},
 			{
 				"fieldname": "lab_portal_access_section",

@@ -192,6 +192,138 @@ def clear_nurse_queue(date=None):
 	return {"status": "Success", "cleared": cleared}
 
 
+def _resolve_practitioner_names(practitioner_ids):
+	"""Small shared lookup used by both the admission-orders list and the
+	admitted-patients search below - given a set of Healthcare Practitioner
+	names, returns a {id: practitioner_name} map, skipping the query
+	entirely when there's nothing to resolve."""
+	if not practitioner_ids:
+		return {}
+	return {
+		p["name"]: p["practitioner_name"]
+		for p in frappe.get_all(
+			"Healthcare Practitioner",
+			filters={"name": ["in", list(practitioner_ids)]},
+			fields=["name", "practitioner_name"],
+		)
+	}
+
+
+# =============================================
+# ADMISSION ORDERS
+# =============================================
+# Display-only query - accepting/rejecting calls
+# healthcare.healthcare.doctype.admission_order.admission_order's own
+# accept_admission_order()/reject_admission_order() directly from
+# nurse_station.js, rather than duplicating that logic here. Those already
+# enforce their own Nursing User role check independent of this page's
+# _require_nurse_access() (which follows Healthcare Settings'
+# front_desk_nurse_roles instead) - a user who can see this page but isn't
+# a Nursing User will see the list but have Accept/Reject rejected
+# server-side, same as trying it from the Admission Order form directly.
+
+
+@frappe.whitelist()
+def get_pending_admission_orders():
+	"""Every Admission Order still awaiting a Nursing User's Accept/Reject -
+	created from Patient Encounter's "Order Admission" dialog (intercepted
+	server-side, see hooks.py's override_whitelisted_methods) and submitted
+	by admission_order.py's create_admission_order(), which also fires the
+	same "department": "nurse" queue_update this page's realtime handler
+	already listens for (see notify_nursing_team()).
+	"""
+	_require_nurse_access()
+
+	orders = frappe.get_all(
+		"Admission Order",
+		filters={"status": "Pending", "docstatus": 1},
+		fields=[
+			"name",
+			"patient",
+			"patient_name",
+			"medical_department",
+			"primary_practitioner",
+			"secondary_practitioner",
+			"admission_ordered_for",
+			"admission_service_unit_type",
+			"expected_length_of_stay",
+			"admission_instruction",
+			"creation",
+		],
+		order_by="creation asc",
+	)
+	if not orders:
+		return []
+
+	practitioner_ids = {o["primary_practitioner"] for o in orders if o.get("primary_practitioner")}
+	practitioner_ids |= {o["secondary_practitioner"] for o in orders if o.get("secondary_practitioner")}
+	practitioner_names = _resolve_practitioner_names(practitioner_ids)
+
+	for order in orders:
+		order["primary_practitioner_name"] = (
+			practitioner_names.get(order.get("primary_practitioner")) or order.get("primary_practitioner")
+		)
+		order["secondary_practitioner_name"] = (
+			practitioner_names.get(order.get("secondary_practitioner")) or order.get("secondary_practitioner")
+		)
+
+	return orders
+
+
+# =============================================
+# ADMITTED PATIENTS
+# =============================================
+
+
+@frappe.whitelist()
+def get_admitted_patients(patient=None):
+	"""Currently admitted patients (Inpatient Record.status == "Admitted"),
+	optionally narrowed to one patient - backs the Admitted Patients tab's
+	search, so a nurse can look up where an inpatient is and who's treating
+	them without leaving this page. Deliberately scoped to "Admitted" only
+	(not Admission Scheduled/Discharge Scheduled/Discharged/Cancelled) -
+	this is a "who's here right now" lookup, not a full inpatient history.
+	"""
+	_require_nurse_access()
+
+	filters = {"status": "Admitted"}
+	if patient:
+		filters["patient"] = patient
+
+	records = frappe.get_all(
+		"Inpatient Record",
+		filters=filters,
+		fields=[
+			"name",
+			"patient",
+			"patient_name",
+			"medical_department",
+			"primary_practitioner",
+			"secondary_practitioner",
+			"admitted_datetime",
+			"expected_discharge",
+			"admission_service_unit_type",
+		],
+		order_by="admitted_datetime desc",
+	)
+	if not records:
+		return []
+
+	practitioner_ids = {r["primary_practitioner"] for r in records if r.get("primary_practitioner")}
+	practitioner_ids |= {r["secondary_practitioner"] for r in records if r.get("secondary_practitioner")}
+	practitioner_names = _resolve_practitioner_names(practitioner_ids)
+
+	for record in records:
+		record["primary_practitioner_name"] = (
+			practitioner_names.get(record.get("primary_practitioner")) or record.get("primary_practitioner")
+		)
+		record["secondary_practitioner_name"] = (
+			practitioner_names.get(record.get("secondary_practitioner")) or record.get("secondary_practitioner")
+		)
+
+	return records
+
+
 # =============================================
 # VITALS
 # =============================================
