@@ -66,38 +66,22 @@ def _notify(event, payload):
 	frappe.publish_realtime(event=event, message=payload)
 
 
-def _route_after_vitals(appointment, appointment_type):
-	"""Extension point for an app layered on top of Healthcare (e.g.
-	sports_complex) to redirect an appointment somewhere other than
-	straight to the doctor queue once vitals are recorded - e.g. a
-	predetermined lab panel that has to complete first. Called from
-	save_vitals() below, right where queue_status would otherwise become
-	"With Doctor" unconditionally.
-
-	Returns True if some other app claimed this appointment and fully
-	handled the routing itself (queue_status + notification both done) -
-	False means save_vitals() should run its own default "With Doctor"
-	path, unchanged. A soft/lazy import keeps this file free of any hard
-	dependency on sports_complex (or any other app) being installed - a
-	site running plain Healthcare behaves exactly as it always has.
-	"""
-	try:
-		from sports_complex.sports_complex.healthcare_integration import route_trial_after_vitals
-	except ImportError:
-		return False
-
-	return bool(route_trial_after_vitals(appointment, appointment_type))
-
 # =============================================
 # TAB ACCESS CONTROL
 # =============================================
 
-FRONT_DESK_TABS = ["checkin", "queue", "nurse", "lab", "doctor"]
+# Nurse Station moved out to its own page (healthcare/healthcare/page/
+# nurse_station) - see nurse_station.py for get_nurse_queue()/
+# clear_nurse_queue()/save_vitals()/update_vitals()/_route_after_vitals(),
+# which used to live here. Front Desk's Queue tab still writes to the
+# same queue_status/custom_nurse_queue_dismissed fields via send_to_nurse()/
+# bulk_send_to_nurse() below - those stayed, since they're triggered from
+# Queue, not from what's now Nurse Station's own page.
+FRONT_DESK_TABS = ["checkin", "queue", "lab", "doctor"]
 
 TAB_ROLES_FIELD = {
 	"checkin": "front_desk_checkin_roles",
 	"queue": "front_desk_queue_roles",
-	"nurse": "front_desk_nurse_roles",
 	"lab": "front_desk_lab_roles",
 	"doctor": "front_desk_doctor_roles",
 }
@@ -105,7 +89,6 @@ TAB_ROLES_FIELD = {
 TAB_LABEL = {
 	"checkin": _("Check-In"),
 	"queue": _("Queue"),
-	"nurse": _("Nurse Station"),
 	"lab": _("Lab"),
 	"doctor": _("Doctor Queue"),
 }
@@ -190,6 +173,9 @@ def bulk_send_to_nurse(appointments):
 
 	for name in eligible:
 		frappe.db.set_value("Patient Appointment", name, "queue_status", "With Nurse")
+		# See send_to_nurse()'s matching note - same defensive reset for
+		# the bulk path.
+		frappe.db.set_value("Patient Appointment", name, "custom_nurse_queue_dismissed", 0)
 
 	if eligible:
 		_notify("queue_update", {
@@ -445,6 +431,17 @@ def confirm_patient_registration(patient):
 	registration_invoice = None
 	if frappe.db.get_single_value("Healthcare Settings", "collect_registration_fee"):
 		registration_invoice = _raise_registration_invoice(patient_doc)
+		if registration_invoice:
+			# _finalize_checkin() below fires this same notification for a
+			# consultation invoice - this was the one invoice-raising path
+			# that never told the Cashier Portal at all, so a registration
+			# fee could sit there unpaid with no toast/sound ever having
+			# announced it.
+			_notify("queue_update", {
+				"department": "cashier",
+				"message": f"New invoice pending: {registration_invoice}",
+				"encounter": None,
+			})
 
 	# No fee actually got invoiced (collection is off entirely, or on
 	# but nothing's configured to invoice) - registration is complete
@@ -1190,225 +1187,138 @@ def get_queue(date=None, queue_status=None):
 		row["medical_department"] = row.pop("department")
 		row["encounter_time"] = row.pop("appointment_time")
 
-	# Vitals live on the standard "Vital Signs" doctype (one submitted doc
-	# per nurse-station recording). It's linked back via its `appointment`
-	# field now, not `encounter` - the Encounter doesn't exist yet at the
-	# point vitals get recorded; see save_vitals() below and
-	# start_consultation() for where the Encounter finally gets created.
-	# Pull the latest submitted Vital Signs per appointment and fold it
-	# into each row under the same vitals_* keys the front-end reads.
-	appointment_ids = [row["name"] for row in rows]
-	if appointment_ids:
-		vitals = frappe.get_all(
-			"Vital Signs",
-			filters={"appointment": ["in", appointment_ids], "docstatus": 1},
-			fields=[
-				"appointment",
-				"temperature",
-				"bp",
-				"pulse",
-				"bmi",
-				"custom_spo2",
-				"custom_fbs",
-				"custom_rbs",
-				"vital_signs_note",
-			],
-			order_by="creation desc",
-		)
-		# order_by desc + first-write-wins gives the latest Vital Signs per
-		# appointment (an appointment can in principle have more than one,
-		# e.g. a re-check).
-		latest_vitals_by_appointment = {}
-		for v in vitals:
-			latest_vitals_by_appointment.setdefault(v["appointment"], v)
-
-		for row in rows:
-			v = latest_vitals_by_appointment.get(row["name"])
-			row["vitals_temperature"] = v["temperature"] if v else None
-			row["vitals_blood_pressure"] = v["bp"] if v else None
-			row["vitals_pulse"] = v["pulse"] if v else None
-			row["vitals_bmi"] = v["bmi"] if v else None
-			row["vitals_spo2"] = v["custom_spo2"] if v else None
-			row["vitals_fbs"] = v["custom_fbs"] if v else None
-			row["vitals_rbs"] = v["custom_rbs"] if v else None
-			row["vitals_notes"] = v["vital_signs_note"] if v else None
-
-	# patient_name stored on the Appointment can be stale/incomplete (e.g.
-	# just a first name) depending on what was on the Patient record at
-	# booking time. Always resolve the full display name fresh from
-	# the Patient doctype (first_name + last_name) rather than trusting
-	# whatever got cached on the Appointment.
-	patient_ids = list({row["patient"] for row in rows if row.get("patient")})
-	if patient_ids:
-		patients = frappe.get_all(
-			"Patient",
-			filters={"name": ["in", patient_ids]},
-			fields=["name", "first_name", "last_name"],
-		)
-
-		def _resolve_full_name(p):
-			first = (p.get("first_name") or "").strip()
-			last = (p.get("last_name") or "").strip()
-			if last:
-				return f"{first} {last}".strip()
-			# last_name was never filled in at registration (the whole
-			# name was typed into First Name instead) - the Patient ID
-			# itself is built from what was typed, so it's the only
-			# place the full name actually survived. Fall back to it,
-			# collapsing any accidental double spaces from that.
-			return " ".join(p["name"].split()) or first
-
-		full_name_map = {p["name"]: _resolve_full_name(p) for p in patients}
-
-		for row in rows:
-			if row.get("patient") in full_name_map:
-				row["patient_name"] = full_name_map[row["patient"]] or row["patient_name"]
+	_attach_latest_vitals(rows)
+	_resolve_patient_full_names(rows)
 
 	return rows
 
 
+def _attach_latest_vitals(rows):
+	"""Vitals live on the standard "Vital Signs" doctype (one submitted doc
+	per nurse-station recording). It's linked back via its `appointment`
+	field now, not `encounter` - the Encounter doesn't exist yet at the
+	point vitals get recorded; see save_vitals() below and
+	start_consultation() for where the Encounter finally gets created.
+	Pulls the latest submitted Vital Signs per appointment and folds it
+	into each row under the vitals_* keys the front-end reads - both the
+	summary fields the queue/doctor tables display and the raw fields the
+	Nurse Station edit dialog needs to prefill (see update_vitals()).
+	Mutates rows in place; shared by get_queue() and get_nurse_queue() so
+	both stay in sync on exactly what "vitals" means for a row.
+	"""
+	appointment_ids = [row["name"] for row in rows]
+	if not appointment_ids:
+		return
+
+	vitals = frappe.get_all(
+		"Vital Signs",
+		filters={"appointment": ["in", appointment_ids], "docstatus": 1},
+		fields=[
+			"appointment",
+			"temperature",
+			"bp",
+			"pulse",
+			"bmi",
+			"respiratory_rate",
+			"tongue",
+			"abdomen",
+			"reflexes",
+			"weight",
+			"height",
+			"custom_spo2",
+			"custom_fbs",
+			"custom_rbs",
+			"vital_signs_note",
+		],
+		order_by="creation desc",
+	)
+	# order_by desc + first-write-wins gives the latest Vital Signs per
+	# appointment (an appointment can in principle have more than one,
+	# e.g. a re-check).
+	latest_vitals_by_appointment = {}
+	for v in vitals:
+		latest_vitals_by_appointment.setdefault(v["appointment"], v)
+
+	for row in rows:
+		v = latest_vitals_by_appointment.get(row["name"])
+		row["vitals_temperature"] = v["temperature"] if v else None
+		row["vitals_blood_pressure"] = v["bp"] if v else None
+		row["vitals_pulse"] = v["pulse"] if v else None
+		row["vitals_bmi"] = v["bmi"] if v else None
+		row["vitals_respiratory_rate"] = v["respiratory_rate"] if v else None
+		row["vitals_tongue"] = v["tongue"] if v else None
+		row["vitals_abdomen"] = v["abdomen"] if v else None
+		row["vitals_reflexes"] = v["reflexes"] if v else None
+		row["vitals_weight"] = v["weight"] if v else None
+		# Stored in metres on the doctype; the nurse-station form (and the
+		# BMI math) works in centimetres throughout - convert back here so
+		# the edit dialog can prefill the same units it saves.
+		row["vitals_height"] = (v["height"] * 100) if v and v["height"] else None
+		row["vitals_spo2"] = v["custom_spo2"] if v else None
+		row["vitals_fbs"] = v["custom_fbs"] if v else None
+		row["vitals_rbs"] = v["custom_rbs"] if v else None
+		row["vitals_notes"] = v["vital_signs_note"] if v else None
+
+
+def _resolve_patient_full_names(rows):
+	"""patient_name stored on the Appointment can be stale/incomplete (e.g.
+	just a first name) depending on what was on the Patient record at
+	booking time. Always resolve the full display name fresh from the
+	Patient doctype (first_name + last_name) rather than trusting whatever
+	got cached on the Appointment. Mutates rows in place; shared by
+	get_queue() and get_nurse_queue().
+	"""
+	patient_ids = list({row["patient"] for row in rows if row.get("patient")})
+	if not patient_ids:
+		return
+
+	patients = frappe.get_all(
+		"Patient",
+		filters={"name": ["in", patient_ids]},
+		fields=["name", "first_name", "last_name"],
+	)
+
+	def _resolve_full_name(p):
+		first = (p.get("first_name") or "").strip()
+		last = (p.get("last_name") or "").strip()
+		if last:
+			return f"{first} {last}".strip()
+		# last_name was never filled in at registration (the whole
+		# name was typed into First Name instead) - the Patient ID
+		# itself is built from what was typed, so it's the only
+		# place the full name actually survived. Fall back to it,
+		# collapsing any accidental double spaces from that.
+		return " ".join(p["name"].split()) or first
+
+	full_name_map = {p["name"]: _resolve_full_name(p) for p in patients}
+
+	for row in rows:
+		if row.get("patient") in full_name_map:
+			row["patient_name"] = full_name_map[row["patient"]] or row["patient_name"]
+
+
 # =============================================
-# NURSE STATION
+# NURSE STATION (send only - Nurse Station's own queue/vitals code now
+# lives in healthcare/healthcare/page/nurse_station/nurse_station.py;
+# these two stay here since they're triggered from Front Desk's own
+# Queue tab, not from Nurse Station's page)
 # =============================================
 
 @frappe.whitelist()
 def send_to_nurse(appointment):
 	_require_tab_access("queue")
 	frappe.db.set_value("Patient Appointment", appointment, "queue_status", "With Nurse")
+	# Defensive: an appointment reaching the nurse queue a second time
+	# (re-sent after being cleared - see clear_nurse_queue()) should show
+	# up again, not stay hidden behind a stale dismissed flag from its
+	# earlier round.
+	frappe.db.set_value("Patient Appointment", appointment, "custom_nurse_queue_dismissed", 0)
 	patient_name = frappe.db.get_value("Patient Appointment", appointment, "patient_name")
 	_notify("queue_update", {
 		"department": "nurse",
 		"message": f"{patient_name} sent to nurse station",
 		"encounter": None,
 	})
-	return {"status": "Success"}
-
-
-def _calculate_bmi(weight, height_cm):
-	"""BMI = weight(kg) / height(m)^2. Computed server-side (rather than
-	trusting a client-supplied value) so it can never drift out of sync
-	with the weight/height actually saved on the Vital Signs doc. Returns
-	None if either input is missing, non-numeric, or height is
-	non-positive (would otherwise divide by zero / produce a nonsense
-	negative BMI). height_cm is in centimetres, matching what the nurse
-	station form collects."""
-
-	try:
-		weight = float(weight)
-		height_cm = float(height_cm)
-	except (TypeError, ValueError):
-		return None
-
-	if not weight or not height_cm or height_cm <= 0:
-		return None
-
-	height_m = height_cm / 100
-	return round(weight / (height_m ** 2), 2)
-
-
-def _split_blood_pressure(blood_pressure):
-	"""The nurse station form still collects blood pressure as one
-	"120/80" text field, but the standard Vital Signs doctype stores it
-	as separate bp_systolic/bp_diastolic numbers. Split it here rather
-	than changing the front-end. Returns (systolic, diastolic), either or
-	both of which may be None if the value is missing or not in
-	"NNN/NNN" form."""
-
-	if not blood_pressure:
-		return None, None
-
-	parts = str(blood_pressure).split("/")
-	if len(parts) != 2:
-		return None, None
-
-	try:
-		return float(parts[0].strip()), float(parts[1].strip())
-	except ValueError:
-		return None, None
-
-
-@frappe.whitelist()
-def save_vitals(
-	appointment,
-	temperature=None,
-	blood_pressure=None,
-	pulse=None,
-	respiratory_rate=None,
-	tongue=None,
-	abdomen=None,
-	reflexes=None,
-	weight=None,
-	height=None,
-	spo2=None,
-	fbs=None,
-	rbs=None,
-	notes=None
-):
-	_require_tab_access("nurse")
-
-	appt = frappe.db.get_value("Patient Appointment", appointment, ["patient"], as_dict=True)
-	bp_systolic, bp_diastolic = _split_blood_pressure(blood_pressure)
-	default_company = frappe.defaults.get_global_default("company")
-
-	vitals_doc = frappe.get_doc({
-		"doctype": "Vital Signs",
-		"naming_series": "HLC-VTS-.YYYY.-",
-
-		"patient": appt.patient,
-		"appointment": appointment,
-		# No Patient Encounter exists yet at this point - it's only
-		# created once a practitioner clicks Start Consultation, see
-		# start_consultation() below, which backfills this Vital Signs
-		# doc's `encounter` field once that happens.
-		"company": default_company,
-
-		"signs_date": nowdate(),
-		"signs_time": nowtime(),
-
-		"temperature": temperature,
-		"pulse": pulse,
-		"respiratory_rate": respiratory_rate,
-		"tongue": tongue,
-		"abdomen": abdomen,
-		"reflexes": reflexes,
-		"bp_systolic": bp_systolic,
-		"bp_diastolic": bp_diastolic,
-		# bp_systolic/diastolic are the real stored values; "bp" is only a
-		# read-only display column that nothing in the standard Vital
-		# Signs controller populates automatically, so set it explicitly
-		# from the same text the nurse typed.
-		"bp": blood_pressure,
-		"height": (float(height) / 100) if height else None,
-		"weight": weight,
-		"bmi": _calculate_bmi(weight, height),
-
-		"custom_spo2": spo2,
-		"custom_fbs": fbs,
-		"custom_rbs": rbs,
-
-		# Always the signed-in nurse, stamped server-side - never take this
-		# from the client, or anyone could attribute a recording to
-		# whoever they like.
-		"custom_vitals_recorded_by": frappe.session.user,
-
-		"vital_signs_note": notes,
-	})
-	vitals_doc.insert(ignore_permissions=True)
-	vitals_doc.submit()
-
-	appointment_type = frappe.db.get_value("Patient Appointment", appointment, "appointment_type")
-	routed = _route_after_vitals(appointment, appointment_type)
-
-	if not routed:
-		frappe.db.set_value("Patient Appointment", appointment, "queue_status", "With Doctor")
-
-		patient_name = frappe.db.get_value("Patient Appointment", appointment, "patient_name")
-		_notify("queue_update", {
-			"department": "doctor",
-			"message": f"{patient_name} ready for consultation",
-			"encounter": None,
-		})
-
 	return {"status": "Success"}
 
 

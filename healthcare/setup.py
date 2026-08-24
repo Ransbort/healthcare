@@ -2091,11 +2091,12 @@ def get_custom_fields():
 		],
 		# Front Desk: drives the walk-in patient journey (receptionist ->
 		# nurse -> doctor). front_desk.py's create_consultation()/
-		# get_queue()/send_to_nurse()/save_vitals()/start_consultation() all
-		# read/write these fields directly - without them, get_queue()
-		# throws "Unknown column 'queue_status'" (as seen when this was
-		# tried as a standalone fixture instead of going through
-		# make_custom_fields()).
+		# get_queue()/send_to_nurse()/start_consultation() and
+		# nurse_station.py's save_vitals()/get_nurse_queue()/
+		# clear_nurse_queue() all read/write these fields directly -
+		# without them, get_queue() throws "Unknown column 'queue_status'"
+		# (as seen when this was tried as a standalone fixture instead of
+		# going through make_custom_fields()).
 		"Patient Appointment": [
 			{
 				"fieldname": "queue_status",
@@ -2131,6 +2132,26 @@ def get_custom_fields():
 				"reqd": 0,
 				"hidden": 0,
 			},
+			{
+				"fieldname": "custom_nurse_queue_dismissed",
+				"label": "Nurse Queue Dismissed",
+				"fieldtype": "Check",
+				"insert_after": "checked_in_at",
+				"default": "0",
+				"description": (
+					"Set by nurse_station.py's clear_nurse_queue() (Nurse "
+					"Station's Clear All button) for an appointment that already "
+					"has vitals recorded, so it drops off the Nurse Station's own "
+					"list without touching queue_status - a doctor "
+					"mid-consultation is never disturbed by a nurse clearing "
+					"their view. Reset back to 0 whenever an appointment is "
+					"(re)sent to the nurse - see front_desk.py's "
+					"send_to_nurse()/bulk_send_to_nurse()."
+				),
+				"reqd": 0,
+				"hidden": 1,
+				"no_copy": 1,
+			},
 		],
 		# Front Desk / Nurse Station: the standard Healthcare "Vital Signs"
 		# doctype covers temperature/pulse/respiratory_rate/tongue/abdomen/
@@ -2138,7 +2159,7 @@ def get_custom_fields():
 		# vital_signs_note out of the box, but has no fields for SpO2, FBS
 		# (Fasting Blood Sugar), RBS (Random Blood Sugar), or who recorded
 		# the reading.
-		# front_desk.py's save_vitals() sets these directly on the Vital
+		# nurse_station.py's save_vitals() sets these directly on the Vital
 		# Signs doc it creates for each nurse-station recording -
 		# custom_vitals_recorded_by is always frappe.session.user, stamped
 		# server-side, never taken from the client.

@@ -587,6 +587,16 @@ def accept_therapy_request(therapy_id, patient_id, encounter_id, therapy_type):
 
 	therapy_row.db_set("custom_therapy_plan", therapy_plan.name)
 
+	# notify_new_therapy_requests() above only announces the *request*
+	# landing in rehab's queue, before any invoice exists - this is the
+	# actual invoice-raising moment (accepting the request is what
+	# creates it), and nothing told the Cashier Portal about it until now.
+	_notify("queue_update", {
+		"department": "cashier",
+		"message": f"New invoice pending: {invoice.name}",
+		"encounter": None,
+	})
+
 	return {
 		"status": "Success",
 		"invoice_name": invoice.name,
@@ -626,6 +636,16 @@ def accept_direct_therapy_request(therapy_plan_name):
 	)
 
 	therapy_plan.db_set("custom_invoice", invoice.name)
+
+	# See accept_therapy_request()'s matching note above - this is a
+	# separate fallback accept path (a direct request that somehow ended
+	# up uninvoiced) and needs the same Cashier Portal notification.
+	_notify("queue_update", {
+		"department": "cashier",
+		"message": f"New invoice pending: {invoice.name}",
+		"encounter": None,
+	})
+
 	return {
 		"status": "Success",
 		"invoice_name": invoice.name,

@@ -43,9 +43,6 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 
 		// Auto-refresh whichever tab is relevant and currently active,
 		// so counts/rows update immediately without a manual refresh
-		if (data.department === 'nurse' && page.main.find('#nurse-tab').hasClass('active')) {
-			loadNurseQueue();
-		}
 		if (data.department === 'laboratory' && page.main.find('#lab-tab').hasClass('active')) {
 			loadLabQueue();
 		}
@@ -209,7 +206,6 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			<div class="tabs-section">
 				<button class="tab-btn active" data-tab="checkin"><i class="fa fa-user-plus"></i> Check-In</button>
 				<button class="tab-btn" data-tab="queue"><i class="fa fa-list"></i> Queue</button>
-				<button class="tab-btn" data-tab="nurse"><i class="fa fa-stethoscope"></i> Nurse Station</button>
 				<button class="tab-btn" data-tab="lab"><i class="fa fa-flask"></i> Lab</button>
 				<button class="tab-btn" data-tab="doctor"><i class="fa fa-user-md"></i> Doctor Queue</button>
 			</div>
@@ -285,15 +281,6 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 				<div class="queue-table-container" id="queue-table-container"></div>
 			</div>
 
-			<!-- NURSE STATION TAB -->
-			<div class="tab-content" id="nurse-tab">
-				<div class="filter-bar">
-					<div data-fieldname="n_date"></div>
-					<button class="btn btn-primary" id="nurse-refresh-btn"><i class="fa fa-refresh"></i> Refresh</button>
-				</div>
-				<div class="queue-table-container" id="nurse-table-container"></div>
-			</div>
-
 			<!-- LAB TAB -->
 			<div class="tab-content" id="lab-tab">
 				<div class="filter-bar">
@@ -328,7 +315,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	}
 
 	withServerToday(function(serverToday) {
-		[ci_date, q_date, n_date, l_date, d_date].forEach(function(ctrl) {
+		[ci_date, q_date, l_date, d_date].forEach(function(ctrl) {
 			if (ctrl) ctrl.set_value(serverToday);
 		});
 	});
@@ -490,12 +477,12 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		callback: function(r) {
 			autoGeneratePatientUid = !!(r.message && r.message.auto_generate_patient_uid);
 			setUidFieldMode();
-			applyTabAccess((r.message && r.message.allowed_tabs) || ['checkin', 'queue', 'nurse', 'lab', 'doctor']);
+			applyTabAccess((r.message && r.message.allowed_tabs) || ['checkin', 'queue', 'lab', 'doctor']);
 		}
 	});
 
 	function applyTabAccess(allowedTabs) {
-		const allTabs = ['checkin', 'queue', 'nurse', 'lab', 'doctor'];
+		const allTabs = ['checkin', 'queue', 'lab', 'doctor'];
 
 		allTabs.forEach(function(tab) {
 			if (allowedTabs.indexOf(tab) === -1) {
@@ -518,7 +505,6 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 				page.main.find(`#${firstAllowed}-tab`).addClass('active').show();
 
 				if (firstAllowed === 'queue') withServerToday(function(t) { q_date.set_value(t); loadQueue(); });
-				if (firstAllowed === 'nurse') withServerToday(function(t) { n_date.set_value(t); loadNurseQueue(); });
 				if (firstAllowed === 'lab') withServerToday(function(t) { l_date.set_value(t); loadLabQueue(); });
 				if (firstAllowed === 'doctor') withServerToday(function(t) { d_date.set_value(t); loadDoctorQueue(); });
 			}
@@ -1056,7 +1042,6 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		page.main.find('.tab-content').removeClass('active');
 		page.main.find(`#${tab}-tab`).addClass('active');
 		if (tab === 'queue') withServerToday(function(t) { q_date.set_value(t); loadQueue(); });
-		if (tab === 'nurse') withServerToday(function(t) { n_date.set_value(t); loadNurseQueue(); });
 		if (tab === 'lab') withServerToday(function(t) { l_date.set_value(t); loadLabQueue(); });
 		if (tab === 'doctor') withServerToday(function(t) { d_date.set_value(t); loadDoctorQueue(); });
 	});
@@ -1174,155 +1159,6 @@ function loadQueue() {
 				}
 			});
 		});
-	}
-
-	// =============================================
-	// NURSE STATION TAB
-	// =============================================
-	let n_date = frappe.ui.form.make_control({
-		parent: page.main.find('[data-fieldname="n_date"]'),
-		df: { fieldtype: 'Date', fieldname: 'n_date', label: 'Date', default: frappe.datetime.get_today() },
-		render_input: true
-	});
-	n_date.refresh();
-	n_date.set_value(frappe.datetime.get_today());
-
-	page.main.find('#nurse-refresh-btn').on('click', function() { loadNurseQueue(); });
-
-	function loadNurseQueue() {
-		frappe.call({
-			method: 'healthcare.healthcare.page.front_desk.front_desk.get_queue',
-			args: { date: n_date.get_value(), queue_status: 'With Nurse' },
-			callback: function(r) { renderNurseTable(r.message || []); }
-		});
-	}
-
-	function renderNurseTable(rows) {
-		const container = page.main.find('#nurse-table-container');
-		if (!rows.length) {
-			container.html(`<div class="empty-state"><i class="fa fa-stethoscope"></i><h4>${__('No patients waiting for vitals')}</h4></div>`);
-			return;
-		}
-		let body = '';
-		rows.forEach(function(row) {
-			body += `
-				<tr class="nurse-row" data-name="${row.name}">
-					<td>${row.encounter_time || ''}</td>
-					<td>${row.patient_name || ''}</td>
-					<td>${row.practitioner_name || row.practitioner || ''}</td>
-					<td>
-						<button class="btn btn-xs btn-primary btn-open-vitals" data-name="${row.name}">${__('Record Vitals')}</button>
-					</td>
-				</tr>
-			`;
-		});
-		container.html(`<table class="queue-table"><tbody>${body}</tbody></table>`);
-
-		container.find('.btn-open-vitals').on('click', function() {
-			const name = $(this).data('name');
-			openVitalsDialog(name);
-		});
-
-		function openVitalsDialog(name) {
-			const dialog = new frappe.ui.Dialog({
-				title: __('Record Vitals'),
-				size: 'large',
-				fields: [
-					{ fieldtype: 'Section Break', label: __('Vitals') },
-					{ fieldtype: 'Float', fieldname: 'temp', label: __('Temperature (°C)') },
-					{ fieldtype: 'Column Break' },
-					{ fieldtype: 'Data', fieldname: 'bp', label: __('Blood Pressure'), placeholder: '120/80' },
-					{ fieldtype: 'Column Break' },
-					{ fieldtype: 'Int', fieldname: 'pulse', label: __('Pulse (bpm)') },
-
-					{ fieldtype: 'Section Break' },
-					{ fieldtype: 'Float', fieldname: 'weight', label: __('Weight (kg)') },
-					{ fieldtype: 'Column Break' },
-					{ fieldtype: 'Float', fieldname: 'height', label: __('Height (cm)') },
-					{ fieldtype: 'Column Break' },
-					// Read-only: this is a live client-side preview only, purely
-					// so the nurse can see it while entering weight/height. The
-					// value actually saved is always recomputed server-side in
-					// save_vitals() -> _calculate_bmi(), never trusted from here.
-					{ fieldtype: 'Float', fieldname: 'bmi', label: __('BMI'), precision: 2, read_only: 1, description: __('Auto-calculated from weight & height') },
-
-					{ fieldtype: 'Section Break' },
-					{ fieldtype: 'Data', fieldname: 'resp', label: __('Respiratory Rate') },
-					{ fieldtype: 'Column Break' },
-					{ fieldtype: 'Select', fieldname: 'tongue', label: __('Tongue'), options: '\nCoated\nVery Coated\nNormal\nFurry\nCuts' },
-					{ fieldtype: 'Column Break' },
-					{ fieldtype: 'Select', fieldname: 'abdomen', label: __('Abdomen'), options: '\nNormal\nBloated\nFull\nFluid\nConstipated' },
-
-					{ fieldtype: 'Section Break' },
-					{ fieldtype: 'Int', fieldname: 'spo2', label: __('SpO2 (%)') },
-					{ fieldtype: 'Column Break' },
-					{ fieldtype: 'Float', fieldname: 'fbs', label: __('FBS (mg/dL)'), description: __('Fasting Blood Sugar') },
-					{ fieldtype: 'Column Break' },
-					{ fieldtype: 'Float', fieldname: 'rbs', label: __('RBS (mg/dL)'), description: __('Random Blood Sugar') },
-
-					{ fieldtype: 'Section Break' },
-					{ fieldtype: 'Select', fieldname: 'reflexes', label: __('Reflexes'), options: '\nNormal\nHyper\nVery Hyper\nOne Sided' },
-					{ fieldtype: 'Column Break' },
-					// Display-only - the actual value saved is always the
-					// signed-in user, stamped server-side in save_vitals()
-					// from frappe.session.user. Never trust/send this from
-					// the client - it's shown here purely so the nurse can
-					// see who they're recording as.
-					{ fieldtype: 'Data', fieldname: 'recorded_by_display', label: __('Vitals Recorded By'), read_only: 1, default: frappe.session.user_fullname || frappe.session.user },
-
-					{ fieldtype: 'Section Break' },
-					{ fieldtype: 'Small Text', fieldname: 'notes', label: __('Notes') },
-				],
-				primary_action_label: __('Save Vitals & Send to Doctor'),
-				primary_action: function(values) {
-					frappe.call({
-						method: 'healthcare.healthcare.page.front_desk.front_desk.save_vitals',
-						args: {
-							appointment: name,
-							temperature: values.temp,
-							blood_pressure: values.bp,
-							pulse: values.pulse,
-							weight: values.weight,
-							height: values.height,
-							respiratory_rate: values.resp,
-							tongue: values.tongue,
-							abdomen: values.abdomen,
-							reflexes: values.reflexes,
-							spo2: values.spo2,
-							fbs: values.fbs,
-							rbs: values.rbs,
-							notes: values.notes
-						},
-						freeze: true,
-						freeze_message: __('Saving vitals...'),
-						callback: function(r) {
-							if (r.message && r.message.status === 'Success') {
-								dialog.hide();
-								frappe.show_alert({ message: __('Vitals saved, sent to doctor'), indicator: 'green' }, 5);
-								loadNurseQueue();
-							}
-						}
-					});
-				}
-			});
-
-			function recalcBmiPreview() {
-				const w = parseFloat(dialog.get_value('weight'));
-				const h = parseFloat(dialog.get_value('height'));
-				if (w > 0 && h > 0) {
-					const heightM = h / 100;
-					dialog.set_value('bmi', Math.round((w / (heightM * heightM)) * 100) / 100);
-				} else {
-					dialog.set_value('bmi', '');
-				}
-			}
-			const weightField = dialog.fields_dict.weight;
-			const heightField = dialog.fields_dict.height;
-			if (weightField && weightField.$input) weightField.$input.on('change input', recalcBmiPreview);
-			if (heightField && heightField.$input) heightField.$input.on('change input', recalcBmiPreview);
-
-			dialog.show();
-		}
 	}
 
 	// =============================================

@@ -492,6 +492,17 @@ def accept_lab_request(prescription_id, patient_id, encounter_id, lab_test_code)
 	lab_test.insert(ignore_permissions=True)
 	prescription_row.db_set("custom_lab_test", lab_test.name)
 	prescription_row.db_set("invoiced", 1)
+
+	# notify_new_lab_requests() above only announces the *request* landing
+	# in the lab's queue, before any invoice exists - this is the actual
+	# invoice-raising moment (accepting the request is what creates it),
+	# and nothing told the Cashier Portal about it until now.
+	_notify("queue_update", {
+		"department": "cashier",
+		"message": f"New invoice pending: {invoice.name}",
+		"encounter": None,
+	})
+
 	return {
 		"status": "Success",
 		"invoice_name": invoice.name,
@@ -514,6 +525,16 @@ def accept_direct_lab_request(lab_test_name):
 	invoice = _create_lab_invoice(patient, lab_test.template, reference_dt="Lab Test", reference_dn=lab_test.name)
 
 	lab_test.db_set("custom_invoice", invoice.name)
+
+	# See accept_lab_request()'s matching note above - this is a separate
+	# fallback accept path (a direct request that somehow ended up
+	# uninvoiced) and needs the same Cashier Portal notification.
+	_notify("queue_update", {
+		"department": "cashier",
+		"message": f"New invoice pending: {invoice.name}",
+		"encounter": None,
+	})
+
 	return {
 		"status": "Success",
 		"invoice_name": invoice.name,
