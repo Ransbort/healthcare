@@ -877,6 +877,18 @@ def _finalize_checkin(appt, patient, consultation_fee):
 			"encounter": None,
 		})
 	else:
+		# No invoice was raised - either consultation_fee was 0 (nothing
+		# due) or an active Fee Validity window already covered this
+		# visit (covered_by_free_followup). Either way nothing is owed,
+		# but _invoice_consultation() never ran, so nothing else in this
+		# flow would ever touch the standard `invoiced` flag on the
+		# appointment. Left at 0, it would sit on the standard
+		# "Appointments to Bill" Number Card forever even though the
+		# visit is already fully settled - inviting staff to open it
+		# later and raise a Sales Invoice by hand for a visit that either
+		# never owed anything or was already covered for free. Marking it
+		# invoiced here closes that off.
+		appt.db_set("invoiced", 1)
 		appt.db_set("queue_status", "Paid - Awaiting Vitals")
 		# No invoice means no "cashier" notify above - fire one here too
 		# so an already-open Queue tab still picks this arrival up live,
@@ -981,6 +993,17 @@ def _invoice_consultation(appt, consultation_fee):
 	# so they never land on this in-memory `appt` object - read the
 	# invoice name back rather than trusting appt.ref_sales_invoice.
 	invoice_name = frappe.db.get_value("Patient Appointment", appt.name, "ref_sales_invoice")
+
+	# Belt-and-braces: the comment above claims create_sales_invoice()
+	# already sets `invoiced` itself, but that's core Healthcare code
+	# this app can't read directly to confirm (it isn't bind-mounted
+	# here, unlike this app's own source) - setting it explicitly costs
+	# nothing when native already did it, and closes off a real
+	# double-billing risk (a checked-in, already-invoiced appointment
+	# still showing up on the standard "Appointments to Bill" Number
+	# Card, inviting staff to raise a second invoice for it by hand) if
+	# that claim ever turns out to be wrong or changes upstream.
+	appt.db_set("invoiced", 1)
 
 	# create_sales_invoice() tags neither Front Desk's own
 	# `consultation_invoice` field (which the rest of this file - the
