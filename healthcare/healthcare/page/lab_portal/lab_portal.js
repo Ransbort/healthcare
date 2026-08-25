@@ -1228,7 +1228,12 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             const priorityClass = lab.priority === 'High' ? 'priority-high' : 
                                  lab.priority === 'Medium' ? 'priority-medium' : 'priority-low';
             
-            const isPaid = lab.payment_status === 'Paid';
+            // 'Free' (a settled trial-panel test with nothing owed - see
+            // lab_portal.py's get_pending_labs()) is treated the same as
+            // 'Paid' here: nothing is blocking the lab work, so it gets
+            // the same Open button/styling as an actually-paid test,
+            // not the disabled "Awaiting Payment" lock below.
+            const isPaid = lab.payment_status === 'Paid' || lab.payment_status === 'Free';
             const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
             const paymentBadgeIcon = isPaid ? 'fa-check-circle' : 'fa-clock-o';
             
@@ -1333,9 +1338,14 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         labs.forEach(function(lab) {
             const priorityClass = lab.priority === 'High' ? 'priority-high' : 
                                  lab.priority === 'Medium' ? 'priority-medium' : 'priority-low';
-            const isPaid = lab.payment_status === 'Paid';
+            // 'Free' (a settled trial-panel test with nothing owed - see
+            // lab_portal.py's get_pending_labs()) is treated the same as
+            // 'Paid' here: nothing is blocking the lab work, so it should
+            // get the same Open button/styling as an actually-paid test,
+            // not the disabled "Awaiting Payment" lock below.
+            const isPaid = lab.payment_status === 'Paid' || lab.payment_status === 'Free';
             const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
-            
+
             tableHtml += `
                 <tr style="${!isPaid ? 'opacity: 0.8;' : ''}">
                     <td><strong>${lab.lab_test_name || lab.lab_test_code}</strong><br><small>${lab.lab_test_code}</small></td>

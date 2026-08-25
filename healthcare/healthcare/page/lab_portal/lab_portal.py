@@ -285,7 +285,18 @@ def get_requested_labs(search_patient=None, search_encounter=None, search_date=N
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(search_patient, search_encounter, search_date)
-	d_conditions[0:0] = ["lt.prescription IS NULL", "lt.custom_invoice IS NULL", "lt.status = 'Draft'"]
+	# ifnull(lt.invoiced, 0) = 0 excludes a free trial panel test
+	# (sports_complex's create_trial_lab_panel() marks those invoiced=1
+	# directly, with no custom_invoice to link, when the trial's
+	# consultation fee was $0/unset - see that function's docstring) -
+	# without this it would show here as if still awaiting billing, even
+	# though nothing is owed.
+	d_conditions[0:0] = [
+		"lt.prescription IS NULL",
+		"lt.custom_invoice IS NULL",
+		"ifnull(lt.invoiced, 0) = 0",
+		"lt.status = 'Draft'",
+	]
 	d_where = " AND ".join(d_conditions)
 	direct_rows = frappe.db.sql(
 		f"""
@@ -357,7 +368,15 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(search_patient, search_encounter, search_date)
-	d_conditions[0:0] = ["lt.prescription IS NULL", "lt.custom_invoice IS NOT NULL", "lt.status != 'Completed'"]
+	# Either a real invoice is linked, or it's a free trial panel test
+	# marked invoiced=1 directly with no invoice to link (see
+	# sports_complex's create_trial_lab_panel() docstring) - both belong
+	# here, nothing left to accept/invoice either way.
+	d_conditions[0:0] = [
+		"lt.prescription IS NULL",
+		"(lt.custom_invoice IS NOT NULL OR lt.invoiced = 1)",
+		"lt.status != 'Completed'",
+	]
 	d_where = " AND ".join(d_conditions)
 	direct_rows = frappe.db.sql(
 		f"""
@@ -370,6 +389,7 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 			lt.patient AS patient,
 			lt.patient_name AS patient_name,
 			lt.creation AS encounter_date,
+			lt.custom_invoice AS direct_custom_invoice,
 			si.status AS invoice_status
 		FROM `tabLab Test` lt
 		LEFT JOIN `tabLab Test Template` ltt ON ltt.name = lt.template
@@ -383,7 +403,13 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 	normalized_direct = []
 	for r in direct_rows:
 		row = _normalize_direct_row(r)
-		row["payment_status"] = "Paid" if r.get("invoice_status") == "Paid" else "Unpaid"
+		if not r.get("direct_custom_invoice"):
+			# Matched the (lt.invoiced = 1) side of the OR above with no
+			# custom_invoice to show a real invoice_status for - a free
+			# trial panel test, nothing owed rather than owed-and-unpaid.
+			row["payment_status"] = "Free"
+		else:
+			row["payment_status"] = "Paid" if r.get("invoice_status") == "Paid" else "Unpaid"
 		normalized_direct.append(row)
 
 	return encounter_rows + normalized_direct
@@ -514,12 +540,52 @@ def accept_lab_request(prescription_id, patient_id, encounter_id, lab_test_code)
 def accept_direct_lab_request(lab_test_name):
 	"""Accept a direct-sourced request: invoice the existing draft Lab Test
 	and link it via custom_invoice, moving it from Requested to Pending.
+
+	Guards against two different "already handled" states, not just one:
+	custom_invoice already set (checked first, as before) and the
+	standard core `invoiced` flag already set with no custom_invoice to
+	show for it - e.g. a free trial panel test (sports_complex's
+	create_trial_lab_panel() marks those invoiced=1 directly, nothing to
+	link) or any other case where invoiced ended up set without this
+	app's own custom_invoice bookkeeping keeping pace. get_requested_labs()
+	now excludes invoiced=1 rows, so this shouldn't normally even be
+	reachable for one any more - but if it is (a stale page, a race), it
+	self-heals instead of ploughing ahead into _create_lab_invoice(),
+	whose invoice.submit() would otherwise crash with a raw, unfriendly
+	"already invoiced" ValidationError from healthcare/utils.py's own
+	validate_invoiced_on_submit() rather than handling it here.
 	"""
 	lab_test = frappe.get_doc("Lab Test", lab_test_name)
 	if lab_test.prescription:
 		frappe.throw(_("Lab Test {0} is encounter-sourced, use accept_lab_request instead").format(lab_test_name))
 	if lab_test.custom_invoice:
 		frappe.throw(_("Lab Test {0} is already invoiced").format(lab_test_name))
+
+	if lab_test.invoiced:
+		# Look for a real Sales Invoice that already covers it and link
+		# that instead of attempting (and failing) to raise a second one.
+		existing_invoice = frappe.db.get_value(
+			"Sales Invoice Item",
+			{"reference_dt": "Lab Test", "reference_dn": lab_test.name, "docstatus": 1},
+			"parent",
+		)
+		if existing_invoice:
+			lab_test.db_set("custom_invoice", existing_invoice)
+			return {
+				"status": "Success",
+				"invoice_name": existing_invoice,
+				"lab_test_name": lab_test.name,
+			}
+
+		# No real invoice exists - marked settled with nothing to bill
+		# (the free trial panel case). Nothing to invoice, nothing to
+		# link - just confirm there's nothing left to do here.
+		frappe.msgprint(_("Lab Test {0} needs no invoice - already marked settled.").format(lab_test_name))
+		return {
+			"status": "Success",
+			"invoice_name": None,
+			"lab_test_name": lab_test.name,
+		}
 
 	patient = frappe.get_doc("Patient", lab_test.patient)
 	invoice = _create_lab_invoice(patient, lab_test.template, reference_dt="Lab Test", reference_dn=lab_test.name)
