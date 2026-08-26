@@ -662,3 +662,99 @@ def get_print_formats(doctype):
 def get_print_content(doctype, docname, print_format=None):
 	html = frappe.get_print(doctype, docname, print_format=print_format or None)
 	return {"html": html}
+
+
+# ---------------------------------------------------------------------
+# "Open Lab Test" popup (Trial Labs tab)
+# ---------------------------------------------------------------------
+# A lightweight in-portal result editor so a lab tech doesn't have to leave
+# Lab Portal to enter a trial test's results - the full Lab Test form still
+# exists and still works for anything these two functions don't cover.
+# Only the two result-table shapes actually in use here are handled -
+# Normal/Compound (normal_test_items) and Descriptive (descriptive_test_items).
+# A template built around Sensitivity/Organism results (culture panels)
+# falls back to result_type "other" - get_lab_test_detail() below doesn't
+# try to guess at a layout for those, it just tells the caller to use the
+# full form instead.
+
+
+@frappe.whitelist()
+def get_lab_test_detail(lab_test_name):
+	"""Loads one Lab Test's own result-entry rows for the "Open Lab Test"
+	popup. Each row keeps its own child-table `idx` so save_lab_test_result()
+	below can write a saved value back onto the exact same row it came from.
+	"""
+	lab_test = frappe.get_doc("Lab Test", lab_test_name)
+
+	if lab_test.normal_test_items:
+		result_type = "normal"
+		items = [
+			{
+				"idx": row.idx,
+				"label": row.lab_test_name,
+				"result_value": row.result_value,
+				"uom": row.lab_test_uom,
+				"normal_range": row.normal_range,
+			}
+			for row in lab_test.normal_test_items
+		]
+	elif lab_test.descriptive_test_items:
+		result_type = "descriptive"
+		items = [
+			{
+				"idx": row.idx,
+				"label": row.lab_test_particulars,
+				"result_value": row.result_value,
+			}
+			for row in lab_test.descriptive_test_items
+		]
+	else:
+		result_type = "other"
+		items = []
+
+	return {
+		"name": lab_test.name,
+		"patient_name": lab_test.patient_name,
+		"template": lab_test.template,
+		"lab_test_name": lab_test.lab_test_name,
+		"status": lab_test.status,
+		"result_type": result_type,
+		"items": items,
+		"lab_test_comment": lab_test.lab_test_comment,
+	}
+
+
+@frappe.whitelist()
+def save_lab_test_result(lab_test_name, result_type, items, lab_test_comment=None, mark_completed=False):
+	"""Saves the values entered in the "Open Lab Test" popup back onto the
+	Lab Test doc. `items` is the list get_lab_test_detail() handed the
+	dialog, each with its `result_value` possibly changed by the user -
+	matched back to its row by `idx`, not position, in case rows were
+	reordered on some other path in between. Only flips status to
+	Completed when the caller explicitly asks for that (mark_completed) -
+	saving a partial result along the way shouldn't silently complete the
+	test.
+	"""
+	if isinstance(items, str):
+		items = frappe.parse_json(items)
+
+	lab_test = frappe.get_doc("Lab Test", lab_test_name)
+
+	rows = lab_test.normal_test_items if result_type == "normal" else lab_test.descriptive_test_items
+	rows_by_idx = {row.idx: row for row in rows}
+
+	for item in items:
+		row = rows_by_idx.get(item.get("idx"))
+		if row:
+			row.result_value = item.get("result_value")
+
+	if lab_test_comment is not None:
+		lab_test.lab_test_comment = lab_test_comment
+
+	if frappe.utils.cint(mark_completed):
+		lab_test.status = "Completed"
+		lab_test.result_date = lab_test.result_date or today()
+
+	lab_test.save(ignore_permissions=True)
+
+	return {"status": "Success", "lab_test_status": lab_test.status}

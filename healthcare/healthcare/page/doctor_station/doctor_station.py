@@ -187,20 +187,14 @@ def start_consultation(appointment):
 	}
 
 
-# =============================================
-# LAB
-# =============================================
-# The Lab tab (trial-candidate patients parked at queue_status "With Lab" -
-# see sports_complex's route_trial_after_vitals()/create_trial_lab_panel())
-# moved over from Front Desk's old Lab tab too, but there's nothing to add
-# here for it: doctor_station.js calls sports_complex.sports_complex.
-# healthcare_integration's own get_trial_lab_queue()/send_trial_to_doctor()
-# directly, exactly like Front Desk's Lab tab always did. Those already
-# gate themselves independently (user_can_access_lab_tab()/
-# user_can_override_lab_gate() there, reading Healthcare Settings'
-# front_desk_lab_roles/front_desk_lab_override_roles) - not through
-# _require_doctor_access() above, same "several independent access-control
-# mechanisms" pattern this app already uses elsewhere.
+# The Lab tab that used to live here (trial-candidate patients parked at
+# queue_status "With Lab" - see sports_complex's route_trial_after_vitals()/
+# create_trial_lab_panel()) has moved to Lab Portal's own Trial Labs tab -
+# see healthcare/page/lab_portal/lab_portal.js and sports_complex's
+# get_trial_lab_queue()/get_trial_lab_tests()/send_trial_to_doctor(). Nothing
+# in this file was ever involved in serving it (doctor_station.js called
+# those sports_complex methods directly), so there's nothing left here to
+# remove beyond doctor_station.js's own markup/JS.
 
 
 # =============================================

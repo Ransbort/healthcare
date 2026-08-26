@@ -649,6 +649,10 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                         <i class="fa fa-check-circle"></i> Completed Labs
                         <span class="badge badge-success" id="completed-count">0</span>
                     </button>
+                    <button class="tab-btn" data-tab="trial">
+                        <i class="fa fa-flask"></i> Trial Labs
+                        <span class="badge badge-warning" id="trial-count">0</span>
+                    </button>
                     <div class="view-toggle-group">
                         <button class="view-toggle-btn active" data-view="card" title="Card View">
                             <i class="fa fa-th-large"></i>
@@ -684,6 +688,30 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 <div class="scrollable-content">
                     <div class="lab-cards-container" id="completed-labs-container"></div>
                     <div class="lab-list-container" id="completed-labs-list" style="display: none;"></div>
+                </div>
+            </div>
+
+            <!-- TRIAL LABS TAB -->
+            <!-- Trial-candidate patients whose predetermined lab panel is
+                 sitting at queue_status "With Lab" - see sports_complex's
+                 route_trial_after_vitals()/create_trial_lab_panel(). Moved
+                 over from Doctor Station's old Lab tab so trial lab work
+                 shows up alongside every other lab request instead of on a
+                 separate page. Data and the Send to Doctor action come
+                 straight from sports_complex.healthcare_integration's own
+                 whitelisted methods, same as Doctor Station always called -
+                 no changes needed there beyond the new flattened
+                 get_trial_lab_tests(). -->
+            <div class="tab-content" id="trial-tab">
+                <div class="completed-filters">
+                    <div class="frappe-control" data-fieldname="trial_date"></div>
+                    <button class="btn btn-primary" id="filter-trial-btn">
+                        <i class="fa fa-filter"></i> Filter
+                    </button>
+                </div>
+                <div class="scrollable-content">
+                    <div class="lab-cards-container" id="trial-labs-container"></div>
+                    <div class="lab-list-container" id="trial-labs-list" style="display: none;"></div>
                 </div>
             </div>
         </div>
@@ -792,6 +820,19 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
 
     completed_date_field.set_value(frappe.datetime.get_today());
 
+    let trial_date_field = frappe.ui.form.make_control({
+        parent: page.main.find('[data-fieldname="trial_date"]'),
+        df: {
+            fieldtype: 'Date',
+            fieldname: 'trial_date',
+            label: 'Date',
+            default: frappe.datetime.get_today()
+        },
+        render_input: true
+    });
+
+    trial_date_field.set_value(frappe.datetime.get_today());
+
     function updateEncounterFilter(patient_id, date) {
         search_encounter_field.df.get_query = function() {
             let filters = { 'docstatus': ['in', [0, 1]] };
@@ -825,6 +866,8 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             displayPendingLabs(window.lastPendingLabs || []);
         } else if (activeTab === 'completed') {
             displayCompletedLabs(window.lastCompletedLabs || []);
+        } else if (activeTab === 'trial') {
+            displayTrialLabs(window.lastTrialLabs || []);
         }
     });
 
@@ -862,6 +905,10 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             search_encounter_field.get_value(),
             completed_date_field.get_value()
         );
+    });
+
+    page.main.find('#filter-trial-btn').on('click', function() {
+        loadTrialLabs(trial_date_field.get_value());
     });
 
     page.main.find('#new-lab-request-btn').on('click', function() {
@@ -966,10 +1013,11 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         const encounter = search_encounter_field.get_value();
         const date = search_date_field.get_value();
 
-        pendingLoads = 3;
+        pendingLoads = 4;
         loadRequestedLabs(patient, encounter, date);
         loadPendingLabs(patient, encounter, date);
         loadCompletedLabs(patient, encounter, completed_date_field.get_value());
+        loadTrialLabs(trial_date_field.get_value());
     }
 
     function loadRequestedLabs(patient, encounter, date) {
@@ -1613,6 +1661,330 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             },
             error: function() {
                 frappe.utils.print('Lab Test', lab_test_name, print_format);
+            }
+        });
+    }
+
+    // ---------------------------------------------------------------
+    // TRIAL LABS (moved over from Doctor Station's old Lab tab)
+    // ---------------------------------------------------------------
+    function loadTrialLabs(date) {
+        frappe.call({
+            method: 'sports_complex.sports_complex.healthcare_integration.get_trial_lab_tests',
+            args: { date: date || trial_date_field.get_value() },
+            callback: function(r) {
+                const rows = r.message || [];
+                window.lastTrialLabs = rows;
+                displayTrialLabs(rows);
+                markLoadDone();
+            }
+        });
+    }
+
+    function displayTrialLabs(rows) {
+        const cardContainer = page.main.find('#trial-labs-container');
+        const listContainer = page.main.find('#trial-labs-list');
+
+        cardContainer.empty();
+        listContainer.empty();
+
+        page.main.find('#trial-count').text(rows.length);
+
+        if (rows.length === 0) {
+            const emptyState = `
+                <div class="empty-state">
+                    <i class="fa fa-flask"></i>
+                    <h4>No Trial Labs</h4>
+                    <p>No trialists are waiting on labs for the selected date.</p>
+                </div>
+            `;
+            cardContainer.html(emptyState);
+            listContainer.html(emptyState);
+            return;
+        }
+
+        if (currentView === 'card') {
+            cardContainer.show();
+            listContainer.hide();
+            renderTrialLabCards(rows, cardContainer);
+        } else {
+            cardContainer.hide();
+            listContainer.show();
+            renderTrialLabList(rows, listContainer);
+        }
+    }
+
+    function trialLabCardMarkup(row) {
+        const dateStr = frappe.datetime.str_to_user(trial_date_field.get_value());
+        const encounterDateTime = row.encounter_time ? `${dateStr} ${row.encounter_time}` : dateStr;
+        const isPaid = row.payment_status === 'Paid' || row.payment_status === 'Free';
+        const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
+        const paymentBadgeIcon = isPaid ? 'fa-check-circle' : 'fa-clock-o';
+        const ready = !!row.ready_for_doctor;
+        const sendBtnClass = ready ? 'btn-success' : 'btn-warning';
+        const sendBtnLabel = ready ? 'Send to Doctor' : 'Send to Doctor (Override)';
+
+        return `
+            <div class="lab-card-header">
+                <div>
+                    <div class="lab-card-title">${frappe.utils.escape_html(row.lab_test_name || row.template)}</div>
+                    <div class="lab-card-subtitle">${frappe.utils.escape_html(row.template)}</div>
+                </div>
+            </div>
+            <div class="lab-card-body">
+                <div class="lab-card-info">
+                    <div class="info-row">
+                        <i class="fa fa-user"></i>
+                        <span class="info-label">Patient:</span>
+                        <span class="info-value">${row.patient_name || ''} (${row.patient || ''})</span>
+                    </div>
+                    <div class="info-row">
+                        <i class="fa fa-calendar"></i>
+                        <span class="info-label">Encounter Date:</span>
+                        <span class="info-value">${encounterDateTime}</span>
+                    </div>
+                    ${row.practitioner_name || row.practitioner ? `
+                    <div class="info-row">
+                        <i class="fa fa-user-md"></i>
+                        <span class="info-label">Practitioner:</span>
+                        <span class="info-value">${row.practitioner_name || row.practitioner}</span>
+                    </div>
+                    ` : ''}
+                    <div class="info-row">
+                        <i class="fa fa-tasks"></i>
+                        <span class="info-label">Panel Progress:</span>
+                        <span class="info-value">${row.tests_completed || 0}/${row.tests_total || 0}</span>
+                    </div>
+                    <div class="info-row">
+                        <i class="fa fa-credit-card"></i>
+                        <span class="info-label">Payment:</span>
+                        <span class="${paymentBadgeClass}" style="padding: 2px 8px; border-radius: 4px;">
+                            <i class="fa ${paymentBadgeIcon}"></i> ${row.payment_status}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="lab-card-footer">
+                <span class="status-badge ${row.lab_test_status === 'Completed' ? 'status-completed' : 'status-pending'}">
+                    <i class="fa ${row.lab_test_status === 'Completed' ? 'fa-check-circle' : 'fa-clock-o'}"></i>
+                    ${row.lab_test_status === 'Completed' ? 'Completed' : 'Pending'}
+                </span>
+                <div class="lab-card-actions">
+                    <button class="btn btn-primary btn-open-lab" data-lab-test="${row.lab_test}">
+                        <i class="fa fa-flask"></i> Open Lab Test
+                    </button>
+                    <button class="btn ${sendBtnClass} btn-send-doctor" data-appointment="${row.appointment}" data-ready="${ready ? '1' : '0'}">
+                        ${sendBtnLabel}
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderTrialLabCards(rows, container) {
+        rows.forEach(function(row) {
+            const card = $(`<div class="lab-card">${trialLabCardMarkup(row)}</div>`);
+
+            card.find('.btn-open-lab').on('click', function(e) {
+                e.stopPropagation();
+                openTrialLabTest(row);
+            });
+            card.find('.btn-send-doctor').on('click', function(e) {
+                e.stopPropagation();
+                handleSendToDoctorClick(row);
+            });
+
+            container.append(card);
+        });
+    }
+
+    function renderTrialLabList(rows, container) {
+        let tableHtml = `
+            <table class="lab-list-table">
+                <thead>
+                    <tr>
+                        <th>Test Name</th>
+                        <th>Patient</th>
+                        <th>Date</th>
+                        <th>Practitioner</th>
+                        <th>Progress</th>
+                        <th>Payment</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        rows.forEach(function(row, index) {
+            const dateStr = frappe.datetime.str_to_user(trial_date_field.get_value());
+            const encounterDateTime = row.encounter_time ? `${dateStr} ${row.encounter_time}` : dateStr;
+            const isPaid = row.payment_status === 'Paid' || row.payment_status === 'Free';
+            const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
+            const ready = !!row.ready_for_doctor;
+            const sendBtnClass = ready ? 'btn-success' : 'btn-warning';
+            const sendBtnLabel = ready ? 'Send' : 'Send (Override)';
+
+            tableHtml += `
+                <tr>
+                    <td><strong>${row.lab_test_name || row.template}</strong><br><small>${row.template}</small></td>
+                    <td>${row.patient_name || ''}<br><small>${row.patient || ''}</small></td>
+                    <td>${encounterDateTime}</td>
+                    <td>${row.practitioner_name || row.practitioner || '-'}</td>
+                    <td>${row.tests_completed || 0}/${row.tests_total || 0}</td>
+                    <td><span class="${paymentBadgeClass}">${row.payment_status}</span></td>
+                    <td>${row.lab_test_status === 'Completed' ? 'Completed' : 'Pending'}</td>
+                    <td>
+                        <div class="lab-list-actions">
+                            <button class="btn btn-primary btn-sm btn-open-lab" data-idx="${index}">
+                                <i class="fa fa-flask"></i> Open
+                            </button>
+                            <button class="btn btn-sm ${sendBtnClass} btn-send-doctor" data-idx="${index}">
+                                ${sendBtnLabel}
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+
+        tableHtml += `
+                </tbody>
+            </table>
+        `;
+
+        container.html(tableHtml);
+
+        container.find('.btn-open-lab').on('click', function(e) {
+            e.stopPropagation();
+            const row = rows[$(this).data('idx')];
+            if (row) openTrialLabTest(row);
+        });
+        container.find('.btn-send-doctor').on('click', function(e) {
+            e.stopPropagation();
+            const row = rows[$(this).data('idx')];
+            if (row) handleSendToDoctorClick(row);
+        });
+    }
+
+    function handleSendToDoctorClick(row) {
+        if (row.ready_for_doctor) {
+            sendTrialToDoctor(row.appointment, null);
+            return;
+        }
+
+        // Not every required test is Completed yet - this only succeeds
+        // server-side for a user with lab override permission
+        // (front_desk_lab_override_roles in Healthcare Settings); everyone
+        // else gets a clear permission error back from the call below. A
+        // reason is always required.
+        const dialog = new frappe.ui.Dialog({
+            title: __('Send to Doctor Before Labs Are Complete'),
+            fields: [
+                {
+                    fieldtype: 'Small Text',
+                    fieldname: 'reason',
+                    label: __('Reason'),
+                    reqd: 1,
+                    description: __('Recorded as a comment on the appointment.')
+                }
+            ],
+            primary_action_label: __('Send Anyway'),
+            primary_action: function(values) {
+                dialog.hide();
+                sendTrialToDoctor(row.appointment, values.reason);
+            }
+        });
+        dialog.show();
+    }
+
+    function sendTrialToDoctor(appointment, overrideReason) {
+        frappe.call({
+            method: 'sports_complex.sports_complex.healthcare_integration.send_trial_to_doctor',
+            args: { appointment: appointment, override_reason: overrideReason },
+            freeze: true,
+            freeze_message: __('Sending to doctor...'),
+            callback: function(r) {
+                if (r.message && r.message.status === 'Success') {
+                    frappe.show_alert({ message: __('Sent to doctor'), indicator: 'green' }, 5);
+                    loadTrialLabs();
+                }
+            }
+        });
+    }
+
+    // "Open Lab Test" popup: loads this specific Lab Test's own result rows
+    // and lets the lab tech fill them in without leaving Lab Portal. Kept
+    // separate from the Pending Labs tab's own openLabTest() (which
+    // navigates to the full Lab Test form) - deliberately not unified with
+    // that, since Trial Labs cards need a genuinely different action here.
+    function openTrialLabTest(row) {
+        frappe.call({
+            method: 'healthcare.healthcare.page.lab_portal.lab_portal.get_lab_test_detail',
+            args: { lab_test_name: row.lab_test },
+            freeze: true,
+            callback: function(r) {
+                const detail = r.message;
+                if (!detail) return;
+
+                if (detail.result_type === 'other') {
+                    frappe.msgprint({
+                        title: __('Open Lab Test'),
+                        message: __("This test's result layout isn't supported in the quick popup yet - opening the full form instead."),
+                        indicator: 'orange'
+                    });
+                    frappe.set_route('Form', 'Lab Test', detail.name);
+                    return;
+                }
+
+                const itemFields = detail.items.map(function(item) {
+                    return {
+                        fieldtype: detail.result_type === 'normal' ? 'Data' : 'Small Text',
+                        fieldname: `item_${item.idx}`,
+                        label: item.label + (item.uom ? ` (${item.uom})` : ''),
+                        default: item.result_value,
+                        description: item.normal_range ? __('Normal range: {0}', [item.normal_range]) : undefined
+                    };
+                });
+
+                const dialog = new frappe.ui.Dialog({
+                    title: `${__('Open Lab Test')} - ${detail.lab_test_name || detail.template}`,
+                    fields: [
+                        { fieldtype: 'Data', fieldname: 'patient_name', label: __('Patient'), default: detail.patient_name, read_only: 1 },
+                        { fieldtype: 'Column Break' },
+                        { fieldtype: 'Data', fieldname: 'status', label: __('Status'), default: detail.status, read_only: 1 },
+                        { fieldtype: 'Section Break', label: __('Results') },
+                        ...itemFields,
+                        { fieldtype: 'Section Break' },
+                        { fieldtype: 'Small Text', fieldname: 'lab_test_comment', label: __('Comments'), default: detail.lab_test_comment },
+                        { fieldtype: 'Check', fieldname: 'mark_completed', label: __('Mark test as Completed'), default: detail.status === 'Completed' ? 1 : 0 }
+                    ],
+                    primary_action_label: __('Save'),
+                    primary_action: function(values) {
+                        const items = detail.items.map(function(item) {
+                            return { idx: item.idx, result_value: values[`item_${item.idx}`] };
+                        });
+                        frappe.call({
+                            method: 'healthcare.healthcare.page.lab_portal.lab_portal.save_lab_test_result',
+                            args: {
+                                lab_test_name: detail.name,
+                                result_type: detail.result_type,
+                                items: items,
+                                lab_test_comment: values.lab_test_comment,
+                                mark_completed: values.mark_completed ? 1 : 0
+                            },
+                            freeze: true,
+                            freeze_message: __('Saving...'),
+                            callback: function() {
+                                frappe.show_alert({ message: __('Lab test results saved'), indicator: 'green' }, 5);
+                                dialog.hide();
+                                loadTrialLabs();
+                            }
+                        });
+                    }
+                });
+
+                dialog.show();
             }
         });
     }

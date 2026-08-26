@@ -12,13 +12,10 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 	// doctor working something else (an open Encounter, another patient)
 	// still hears/sees a new arrival instead of having to keep this tab
 	// in view. Fires whenever Nurse Station finishes vitals and sends a
-	// patient on (see nurse_station.py's save_vitals()) or an app layered
-	// on top of Healthcare routes one here directly - department 'doctor'
-	// for the Doctor Queue, 'laboratory' for the Lab tab (fired by
-	// sports_complex's route_trial_after_vitals() the moment a trial
-	// panel's created, and by lab_portal.py whenever any new lab request
-	// comes in - a harmless bonus refresh there, not required for the
-	// trial flow itself).
+	// patient straight to the doctor (see nurse_station.py's save_vitals())
+	// - department 'doctor' for the Doctor Queue. The Lab tab (and its
+	// 'laboratory' department events) moved to Lab Portal's own Trial
+	// Labs tab; this page has nothing left to refresh on those.
 	const notificationSound = new Audio('/assets/healthcare/sounds/notify.mp3');
 
 	let audioUnlocked = false;
@@ -43,7 +40,7 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 	}
 
 	frappe.realtime.on('queue_update', function(data) {
-		if (data.department !== 'doctor' && data.department !== 'laboratory') return;
+		if (data.department !== 'doctor') return;
 		playNotification();
 		frappe.show_alert({
 			message: data.message,
@@ -262,10 +259,6 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 			.queue-table td { padding: 12px; font-size: 0.9rem; border-bottom: 1px solid #e9ecef; }
 			.queue-table tbody tr:hover { background: #f8f9fa; }
 
-			.lab-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; margin: 1px 3px 1px 0; }
-			.lab-pill-done { background: #d4edda; color: #155724; }
-			.lab-pill-pending { background: #fff3cd; color: #856404; }
-
 			.badge-registered { background: #e2e3e5; color: #383d41; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-active { background: #d4edda; color: #155724; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-disabled { background: #f8d7da; color: #842029; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
@@ -317,10 +310,6 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 						<i class="fa fa-stethoscope"></i> ${__('Doctor Queue')}
 						<span class="badge badge-info" id="queue-count">0</span>
 					</button>
-					<button class="tab-btn" data-tab="lab">
-						<i class="fa fa-flask"></i> ${__('Lab')}
-						<span class="badge badge-warning" id="lab-count">0</span>
-					</button>
 					<button class="tab-btn" data-tab="search">
 						<i class="fa fa-search"></i> ${__('Patient Search')}
 						<span class="badge" id="search-count">0</span>
@@ -340,29 +329,6 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 				</div>
 				<div class="scrollable-content">
 					<div class="queue-table-container" id="doctor-queue-container"></div>
-				</div>
-			</div>
-
-			<!-- LAB TAB -->
-			<!-- Trial-candidate patients parked at queue_status "With Lab" -
-			     see sports_complex's route_trial_after_vitals()/
-			     create_trial_lab_panel(). Data and actions here come
-			     straight from sports_complex.healthcare_integration's own
-			     whitelisted methods (get_trial_lab_queue()/
-			     send_trial_to_doctor()), not from doctor_station.py - this
-			     tab moved over from Front Desk's old Lab tab as-is, no
-			     backend changes needed on the Healthcare app's side. -->
-			<div class="tab-content" id="lab-tab">
-				<div class="search-section">
-					<div class="search-input-group">
-						<div data-fieldname="lab_date"></div>
-						<button class="btn btn-primary" id="lab-refresh-date-btn">
-							<i class="fa fa-filter"></i> ${__('Filter')}
-						</button>
-					</div>
-				</div>
-				<div class="scrollable-content">
-					<div class="queue-table-container" id="lab-queue-container"></div>
 				</div>
 			</div>
 
@@ -408,9 +374,8 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 	}
 
 	function loadAll() {
-		pendingLoads = 2;
+		pendingLoads = 1;
 		loadDoctorQueue();
-		loadLabQueue();
 		// Patient Search deliberately doesn't auto-load on a blank term
 		// (see search_patients()'s docstring) - only re-run it here if
 		// there's already a search in progress, so a refresh keeps
@@ -527,116 +492,6 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 					}
 				}
 			});
-		});
-	}
-
-	// =============================================
-	// LAB (moved over from Front Desk's old Lab tab as-is - see the
-	// markup comment above for why there's no doctor_station.py
-	// involvement here)
-	// =============================================
-	let lab_date = frappe.ui.form.make_control({
-		parent: page.main.find('[data-fieldname="lab_date"]'),
-		df: { fieldtype: 'Date', fieldname: 'lab_date', label: 'Date', default: frappe.datetime.get_today() },
-		render_input: true
-	});
-	lab_date.refresh();
-	lab_date.set_value(frappe.datetime.get_today());
-
-	page.main.find('#lab-refresh-date-btn').on('click', function() { loadLabQueue(); });
-
-	function loadLabQueue() {
-		frappe.call({
-			method: 'sports_complex.sports_complex.healthcare_integration.get_trial_lab_queue',
-			args: { date: lab_date.get_value() },
-			callback: function(r) {
-				renderLabQueue(r.message || []);
-				markLoadDone();
-			}
-		});
-	}
-
-	function renderLabQueue(rows) {
-		page.main.find('#lab-count').text(rows.length);
-		const container = page.main.find('#lab-queue-container');
-		if (!rows.length) {
-			container.html(`<div class="empty-state"><i class="fa fa-flask"></i><h4>${__('No trialists waiting on labs')}</h4></div>`);
-			return;
-		}
-		let body = '';
-		rows.forEach(function(row) {
-			const testPills = (row.tests || []).map(function(t) {
-				const cls = t.status === 'Completed' ? 'lab-pill-done' : 'lab-pill-pending';
-				return `<span class="lab-pill ${cls}">${frappe.utils.escape_html(t.template)}: ${frappe.utils.escape_html(t.status)}</span>`;
-			}).join(' ');
-			const ready = !!row.ready_for_doctor;
-			const btnClass = ready ? 'btn-success' : 'btn-warning';
-			const btnLabel = ready ? __('Send to Doctor') : __('Send to Doctor (Override)');
-			body += `
-				<tr>
-					<td>${row.encounter_time || ''}</td>
-					<td>${row.patient_name || ''}</td>
-					<td>${row.practitioner_name || row.practitioner || ''}</td>
-					<td><small>${testPills || __('No tests configured')}</small></td>
-					<td>${row.tests_completed || 0}/${row.tests_total || 0}</td>
-					<td><button class="btn btn-xs ${btnClass} btn-send-doctor" data-name="${row.name}" data-ready="${ready ? '1' : '0'}">${btnLabel}</button></td>
-				</tr>
-			`;
-		});
-		container.html(`
-			<table class="queue-table">
-				<thead><tr><th>${__('Time')}</th><th>${__('Patient')}</th><th>${__('Practitioner')}</th><th>${__('Required Tests')}</th><th>${__('Progress')}</th><th></th></tr></thead>
-				<tbody>${body}</tbody>
-			</table>
-		`);
-
-		container.find('.btn-send-doctor').on('click', function() {
-			const name = $(this).data('name');
-			const ready = $(this).data('ready') === 1 || $(this).data('ready') === '1';
-
-			if (ready) {
-				sendTrialToDoctor(name, null);
-				return;
-			}
-
-			// Not every required test is Completed yet - this only
-			// succeeds server-side for a user with lab override
-			// permission (front_desk_lab_override_roles in Healthcare
-			// Settings); everyone else gets a clear permission error back
-			// from the call below. A reason is always required.
-			const dialog = new frappe.ui.Dialog({
-				title: __('Send to Doctor Before Labs Are Complete'),
-				fields: [
-					{
-						fieldtype: 'Small Text',
-						fieldname: 'reason',
-						label: __('Reason'),
-						reqd: 1,
-						description: __('Recorded as a comment on the appointment.')
-					}
-				],
-				primary_action_label: __('Send Anyway'),
-				primary_action: function(values) {
-					dialog.hide();
-					sendTrialToDoctor(name, values.reason);
-				}
-			});
-			dialog.show();
-		});
-	}
-
-	function sendTrialToDoctor(appointment, overrideReason) {
-		frappe.call({
-			method: 'sports_complex.sports_complex.healthcare_integration.send_trial_to_doctor',
-			args: { appointment: appointment, override_reason: overrideReason },
-			freeze: true,
-			freeze_message: __('Sending to doctor...'),
-			callback: function(r) {
-				if (r.message && r.message.status === 'Success') {
-					frappe.show_alert({ message: __('Sent to doctor'), indicator: 'green' }, 5);
-					loadLabQueue();
-				}
-			}
 		});
 	}
 
