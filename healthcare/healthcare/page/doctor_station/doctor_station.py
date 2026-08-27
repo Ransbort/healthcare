@@ -75,15 +75,50 @@ def _require_doctor_access():
 # Appointment (queue_status/checked_in_at etc, stamped by Front Desk's
 # check-in flow and Nurse Station's save_vitals()) - this page only reads
 # and advances it from here on.
+#
+# get_doctor_queue() used to only return appointments already "With
+# Doctor" - the queue looked empty right up until someone landed on the
+# doctor's desk, with no visibility into who was still moving through
+# Front Desk/Nurse Station/Lab. It now returns everyone checked in today
+# who hasn't finished (queue_status != Completed), each tagged with a
+# normalized `stage` the front-end groups/badges by - see
+# _stage_for_queue_status() below. Same filter shape as front_desk.py's
+# own get_queue() (checked in today, not yet Completed) - re-implemented
+# here rather than calling that directly, since front_desk.get_queue() is
+# gated by its own front_desk_queue_roles setting, not doctor access; this
+# stays gated by _require_doctor_access() like every other method on this
+# page.
+
+# Raw queue_status values (see front_desk.py/nurse_station.py/this page's
+# own start_consultation()) mapped to the stage labels doctor_station.js
+# groups and badges by. Anything not listed here (there shouldn't be
+# anything) falls back to the raw value unchanged - see
+# _stage_for_queue_status().
+_STAGE_LABELS = {
+	"Payment Pending": "Front Desk",
+	"Paid - Awaiting Vitals": "Front Desk",
+	"With Nurse": "With Nurse",
+	"With Lab": "With Lab",
+	"With Doctor": "With Doctor",
+	"In Consultation": "In Consultation",
+}
+
+
+def _stage_for_queue_status(queue_status):
+	return _STAGE_LABELS.get(queue_status, queue_status)
 
 
 @frappe.whitelist()
 def get_doctor_queue(date=None):
-	"""Every appointment currently waiting on this doctor - checked in
-	today and queue_status "With Doctor" (set by Nurse Station once vitals
-	are recorded, or by an app layered on top of Healthcare via its own
-	routing - see front_desk.py's _route_after_vitals()). Doesn't include
-	anything still with the nurse or already in consultation/completed."""
+	"""Every appointment still moving through today's pipeline - not just
+	the ones already "With Doctor" - so a doctor can see how close the
+	next few patients actually are instead of the queue looking empty
+	until someone lands on their desk. "With Lab" rows don't carry lab
+	progress here (this app doesn't depend on sports_complex) -
+	doctor_station.js fetches that separately from sports_complex.
+	healthcare_integration.get_trial_lab_queue() and merges it in by
+	appointment name, same as this page's old Lab tab did.
+	"""
 	_require_doctor_access()
 	date = date or nowdate()
 
@@ -92,7 +127,7 @@ def get_doctor_queue(date=None):
 		filters={
 			"appointment_date": date,
 			"checked_in_at": ["is", "set"],
-			"queue_status": "With Doctor",
+			"queue_status": ["!=", "Completed"],
 		},
 		fields=[
 			"name",
@@ -112,6 +147,7 @@ def get_doctor_queue(date=None):
 	for row in rows:
 		row["medical_department"] = row.pop("department")
 		row["encounter_time"] = row.pop("appointment_time")
+		row["stage"] = _stage_for_queue_status(row["queue_status"])
 
 	_attach_latest_vitals(rows)
 	_resolve_patient_full_names(rows)

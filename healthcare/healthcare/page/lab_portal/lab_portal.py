@@ -372,10 +372,24 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 	# marked invoiced=1 directly with no invoice to link (see
 	# sports_complex's create_trial_lab_panel() docstring) - both belong
 	# here, nothing left to accept/invoice either way.
+	#
+	# sc_trial_appointment IS NULL excludes trial panel tests specifically -
+	# those have their own dedicated Trial Labs tab now (sports_complex's
+	# get_trial_lab_tests()), which covers exactly this same "not yet
+	# Completed" state for a trial. Without this they'd show up twice -
+	# once here, once there - which is what actually happened before this
+	# was added: staff were clicking Pending Labs' "Open Lab Test" (full
+	# form navigation) instead of Trial Labs' own, on the very cards this
+	# excludes. Deliberately NOT added to get_completed_labs() below -
+	# once a trial's appointment leaves "With Lab" (sent to the doctor),
+	# get_trial_lab_queue() stops returning it, so a completed trial test
+	# needs to stay visible in the general Completed Labs tab or it
+	# disappears from Lab Portal entirely.
 	d_conditions[0:0] = [
 		"lt.prescription IS NULL",
 		"(lt.custom_invoice IS NOT NULL OR lt.invoiced = 1)",
 		"lt.status != 'Completed'",
+		"lt.sc_trial_appointment IS NULL",
 	]
 	d_where = " AND ".join(d_conditions)
 	direct_rows = frappe.db.sql(

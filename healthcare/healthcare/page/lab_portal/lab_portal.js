@@ -336,6 +336,44 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 gap: 20px;
             }
 
+            .patient-group {
+                grid-column: 1 / -1;
+            }
+
+            .patient-group + .patient-group {
+                margin-top: 8px;
+            }
+
+            .patient-group-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 4px 10px;
+                margin-bottom: 14px;
+                border-bottom: 2px solid #e9ecef;
+                font-weight: 700;
+                font-size: 0.95rem;
+                color: #2c3e50;
+            }
+
+            .patient-group-header i {
+                color: var(--primary-color);
+            }
+
+            .patient-group-actions {
+                margin-left: auto;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .patient-group-cards {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+                gap: 20px;
+                margin-bottom: 22px;
+            }
+
             .lab-list-container {
                 background: white;
                 border-radius: 8px;
@@ -1106,6 +1144,53 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         }
     }
 
+    function groupRowsByPatient(rows) {
+        const groups = [];
+        const index = {};
+        rows.forEach(function(row) {
+            const key = row.patient || row.patient_name || '__unknown__';
+            if (!index[key]) {
+                index[key] = { patient: row.patient, patient_name: row.patient_name, rows: [] };
+                groups.push(index[key]);
+            }
+            index[key].rows.push(row);
+        });
+        return groups;
+    }
+
+    // Renders `rows` as patient-grouped card sections inside `container` -
+    // every patient's cards clustered under one heading instead of
+    // scattered through a flat grid, so it's obvious at a glance which
+    // tests belong to the same person. Group order follows first
+    // appearance in `rows` (already sorted by date), not an extra
+    // alphabetical sort. `cardBuilder(row)` must return the built jQuery
+    // card element for one row - this only handles the grouping/heading
+    // shell around it.
+    function renderGroupedByPatient(rows, container, cardBuilder, opts) {
+        opts = opts || {};
+        groupRowsByPatient(rows).forEach(function(group) {
+            const groupEl = $(`
+                <div class="patient-group">
+                    <div class="patient-group-header">
+                        <i class="fa fa-user"></i>
+                        <span>${frappe.utils.escape_html(group.patient_name || '')}${group.patient ? ` (${frappe.utils.escape_html(group.patient)})` : ''}</span>
+                        <span class="badge badge-info patient-group-count">${group.rows.length}</span>
+                        <div class="patient-group-actions"></div>
+                    </div>
+                    <div class="patient-group-cards"></div>
+                </div>
+            `);
+            if (opts.headerActions) {
+                groupEl.find('.patient-group-actions').append(opts.headerActions(group));
+            }
+            const cardsEl = groupEl.find('.patient-group-cards');
+            group.rows.forEach(function(row) {
+                cardsEl.append(cardBuilder(row));
+            });
+            container.append(groupEl);
+        });
+    }
+
     function renderRequestedLabCards(labs, container) {
         labs.forEach(function(lab) {
             const priorityClass = lab.priority === 'High' ? 'priority-high' : 
@@ -1272,10 +1357,10 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
     }
 
     function renderPendingLabCards(labs, container) {
-        labs.forEach(function(lab) {
-            const priorityClass = lab.priority === 'High' ? 'priority-high' : 
+        renderGroupedByPatient(labs, container, function(lab) {
+            const priorityClass = lab.priority === 'High' ? 'priority-high' :
                                  lab.priority === 'Medium' ? 'priority-medium' : 'priority-low';
-            
+
             // 'Free' (a settled trial-panel test with nothing owed - see
             // lab_portal.py's get_pending_labs()) is treated the same as
             // 'Paid' here: nothing is blocking the lab work, so it gets
@@ -1284,7 +1369,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             const isPaid = lab.payment_status === 'Paid' || lab.payment_status === 'Free';
             const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
             const paymentBadgeIcon = isPaid ? 'fa-check-circle' : 'fa-clock-o';
-            
+
             const card = $(`
                 <div class="lab-card" style="${!isPaid ? 'opacity: 0.8;' : ''}">
                     <div class="lab-card-header">
@@ -1362,7 +1447,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 });
             }
 
-            container.append(card);
+            return card;
         });
     }
 
@@ -1720,9 +1805,6 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         const isPaid = row.payment_status === 'Paid' || row.payment_status === 'Free';
         const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
         const paymentBadgeIcon = isPaid ? 'fa-check-circle' : 'fa-clock-o';
-        const ready = !!row.ready_for_doctor;
-        const sendBtnClass = ready ? 'btn-success' : 'btn-warning';
-        const sendBtnLabel = ready ? 'Send to Doctor' : 'Send to Doctor (Override)';
 
         return `
             <div class="lab-card-header">
@@ -1773,28 +1855,41 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                     <button class="btn btn-primary btn-open-lab" data-lab-test="${row.lab_test}">
                         <i class="fa fa-flask"></i> Open Lab Test
                     </button>
-                    <button class="btn ${sendBtnClass} btn-send-doctor" data-appointment="${row.appointment}" data-ready="${ready ? '1' : '0'}">
-                        ${sendBtnLabel}
-                    </button>
                 </div>
             </div>
         `;
     }
 
     function renderTrialLabCards(rows, container) {
-        rows.forEach(function(row) {
+        renderGroupedByPatient(rows, container, function(row) {
             const card = $(`<div class="lab-card">${trialLabCardMarkup(row)}</div>`);
 
             card.find('.btn-open-lab').on('click', function(e) {
                 e.stopPropagation();
                 openTrialLabTest(row);
             });
-            card.find('.btn-send-doctor').on('click', function(e) {
-                e.stopPropagation();
-                handleSendToDoctorClick(row);
-            });
 
-            container.append(card);
+            return card;
+        }, {
+            // Send to Doctor acts on the whole appointment, not one test -
+            // every row in a patient's group shares the same appointment/
+            // ready_for_doctor (see get_trial_lab_tests()'s docstring), so
+            // one button on the group header (not one per card) is both
+            // correct and avoids sending the same appointment on twice.
+            headerActions: function(group) {
+                const first = group.rows[0];
+                const ready = !!first.ready_for_doctor;
+                const btn = $(`
+                    <button class="btn btn-sm ${ready ? 'btn-success' : 'btn-warning'} btn-send-doctor">
+                        ${ready ? __('Send to Doctor') : __('Send to Doctor (Override)')}
+                    </button>
+                `);
+                btn.on('click', function(e) {
+                    e.stopPropagation();
+                    handleSendToDoctorClick(first);
+                });
+                return btn;
+            }
         });
     }
 
@@ -1913,15 +2008,16 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         });
     }
 
-    // "Open Lab Test" popup: loads this specific Lab Test's own result rows
-    // and lets the lab tech fill them in without leaving Lab Portal. Kept
-    // separate from the Pending Labs tab's own openLabTest() (which
-    // navigates to the full Lab Test form) - deliberately not unified with
-    // that, since Trial Labs cards need a genuinely different action here.
-    function openTrialLabTest(row) {
+    // "Open Lab Test" popup: loads one Lab Test's own result rows and lets
+    // the lab tech fill them in without leaving Lab Portal, instead of
+    // navigating to the full Lab Test form. Shared by every tab's "Open
+    // Lab Test" action (Pending Labs' openLabTest() and Trial Labs'
+    // openTrialLabTest() below) - `onSaved` is called after a successful
+    // save so each caller can refresh whichever tab it belongs to.
+    function openLabTestDialog(labTestName, onSaved) {
         frappe.call({
             method: 'healthcare.healthcare.page.lab_portal.lab_portal.get_lab_test_detail',
-            args: { lab_test_name: row.lab_test },
+            args: { lab_test_name: labTestName },
             freeze: true,
             callback: function(r) {
                 const detail = r.message;
@@ -1978,7 +2074,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                             callback: function() {
                                 frappe.show_alert({ message: __('Lab test results saved'), indicator: 'green' }, 5);
                                 dialog.hide();
-                                loadTrialLabs();
+                                if (onSaved) onSaved();
                             }
                         });
                     }
@@ -1986,6 +2082,12 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
 
                 dialog.show();
             }
+        });
+    }
+
+    function openTrialLabTest(row) {
+        openLabTestDialog(row.lab_test, function() {
+            loadTrialLabs();
         });
     }
 
@@ -2038,7 +2140,13 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
 
     function openLabTest(lab) {
         if (lab.custom_lab_test) {
-            frappe.set_route('Form', 'Lab Test', lab.custom_lab_test);
+            openLabTestDialog(lab.custom_lab_test, function() {
+                loadPendingLabs(
+                    search_patient_field.get_value(),
+                    search_encounter_field.get_value(),
+                    search_date_field.get_value()
+                );
+            });
         } else {
             frappe.show_alert({
                 message: __('Lab Test document not found. Please contact administrator.'),

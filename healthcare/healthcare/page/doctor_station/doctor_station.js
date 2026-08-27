@@ -11,11 +11,12 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 	// Same pattern as Front Desk / Nurse Station / Laboratory Portal - a
 	// doctor working something else (an open Encounter, another patient)
 	// still hears/sees a new arrival instead of having to keep this tab
-	// in view. Fires whenever Nurse Station finishes vitals and sends a
-	// patient straight to the doctor (see nurse_station.py's save_vitals())
-	// - department 'doctor' for the Doctor Queue. The Lab tab (and its
-	// 'laboratory' department events) moved to Lab Portal's own Trial
-	// Labs tab; this page has nothing left to refresh on those.
+	// in view. Sound + toast only for department 'doctor' (someone is
+	// actually ready for consultation now) - 'nurse'/'laboratory' events
+	// just mean a patient moved a step through the pipeline the Doctor
+	// Queue tab now shows in full, so those refresh the table quietly
+	// without interrupting the doctor for something that isn't theirs to
+	// act on yet.
 	const notificationSound = new Audio('/assets/healthcare/sounds/notify.mp3');
 
 	let audioUnlocked = false;
@@ -40,12 +41,14 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 	}
 
 	frappe.realtime.on('queue_update', function(data) {
-		if (data.department !== 'doctor') return;
-		playNotification();
-		frappe.show_alert({
-			message: data.message,
-			indicator: 'blue'
-		}, 6);
+		if (!['doctor', 'nurse', 'laboratory'].includes(data.department)) return;
+		if (data.department === 'doctor') {
+			playNotification();
+			frappe.show_alert({
+				message: data.message,
+				indicator: 'blue'
+			}, 6);
+		}
 		loadAll();
 	});
 
@@ -263,6 +266,14 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 			.badge-active { background: #d4edda; color: #155724; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-disabled { background: #f8d7da; color: #842029; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 
+			/* --- Pipeline stage badges (Doctor Queue tab) --- */
+			.stage-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+			.stage-frontdesk { background: #e2e3e5; color: #383d41; }
+			.stage-nurse { background: #cfe2ff; color: #084298; }
+			.stage-lab { background: #fff3cd; color: #856404; }
+			.stage-doctor { background: #d4edda; color: #155724; }
+			.stage-consultation { background: #e7d6fb; color: #5a2a8c; }
+
 			.empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
 			.empty-state i { font-size: 64px; margin-bottom: 20px; opacity: 0.3; }
 			.empty-state h4 { font-size: 1.3rem; margin-bottom: 10px; color: #495057; }
@@ -359,6 +370,27 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 		return `<span class="${map[status] || 'badge-registered'}">${status || ''}</span>`;
 	}
 
+	// Formats a Patient Appointment "Time" field for display, e.g. "12:27pm".
+	// These come back from the server in a couple of different raw shapes -
+	// a proper zero-padded "HH:MM:SS[.ffffff]" most of the time, but
+	// occasionally a Python timedelta's own str() instead ("0:03:14.657203",
+	// no leading zero on a single-digit hour). Only the hour/minute matter
+	// for display, and matching on \d+ rather than requiring two digits
+	// handles both shapes the same way. Own copy in each of Front Desk /
+	// Nurse Station / Doctor Station - same duplication this codebase
+	// already uses for other small cross-page helpers, so all three read
+	// the same "12:27pm" format without a shared module to keep in sync.
+	function formatQueueTime(value) {
+		if (!value) return '';
+		const match = String(value).match(/^(\d+):(\d{2})/);
+		if (!match) return value;
+		let hours = parseInt(match[1], 10) % 24;
+		const minutes = match[2];
+		const period = hours >= 12 ? 'pm' : 'am';
+		hours = hours % 12 || 12;
+		return `${hours}:${minutes}${period}`;
+	}
+
 	// Tracks how many of the loads kicked off by loadAll() are still in
 	// flight, so "Last updated" only refreshes once everything currently
 	// on screen is current - same pattern Nurse Station / Laboratory
@@ -422,17 +454,82 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 			method: 'healthcare.healthcare.page.doctor_station.doctor_station.get_doctor_queue',
 			args: { date: doc_date.get_value() },
 			callback: function(r) {
-				renderDoctorQueue(r.message || []);
-				markLoadDone();
+				const rows = r.message || [];
+				const hasLabRows = rows.some(function(row) { return row.queue_status === 'With Lab'; });
+
+				if (!hasLabRows) {
+					renderDoctorQueue(rows);
+					markLoadDone();
+					return;
+				}
+
+				// At least one patient's panel is still with the lab -
+				// fetch per-test progress from sports_complex (this app
+				// doesn't depend on it, so this is a separate call, not a
+				// join - see get_doctor_queue()'s docstring) and merge it
+				// in by appointment name before rendering. If the current
+				// user can't reach that endpoint for some reason
+				// (Healthcare Settings' front_desk_lab_roles gate), the
+				// "With Lab" rows still render - just without a test
+				// count.
+				frappe.call({
+					method: 'sports_complex.sports_complex.healthcare_integration.get_trial_lab_queue',
+					args: { date: doc_date.get_value() },
+					callback: function(labResult) {
+						mergeLabProgress(rows, labResult.message || []);
+						renderDoctorQueue(rows);
+						markLoadDone();
+					},
+					error: function() {
+						renderDoctorQueue(rows);
+						markLoadDone();
+					}
+				});
 			}
 		});
 	}
 
+	function mergeLabProgress(rows, labRows) {
+		const byAppointment = {};
+		labRows.forEach(function(labRow) { byAppointment[labRow.name] = labRow; });
+		rows.forEach(function(row) {
+			const labRow = byAppointment[row.name];
+			if (labRow) {
+				row.lab_tests_completed = labRow.tests_completed;
+				row.lab_tests_total = labRow.tests_total;
+			}
+		});
+	}
+
+	const STAGE_CLASS = {
+		'Front Desk': 'stage-frontdesk',
+		'With Nurse': 'stage-nurse',
+		'With Lab': 'stage-lab',
+		'With Doctor': 'stage-doctor',
+		'In Consultation': 'stage-consultation'
+	};
+
+	function stageBadge(row) {
+		const stage = row.stage || row.queue_status;
+		const cls = STAGE_CLASS[stage] || 'stage-frontdesk';
+		let label = __(stage);
+		if (stage === 'With Lab' && row.lab_tests_total) {
+			label += ` (${row.lab_tests_completed || 0}/${row.lab_tests_total})`;
+		}
+		return `<span class="stage-badge ${cls}">${label}</span>`;
+	}
+
 	function renderDoctorQueue(rows) {
-		page.main.find('#queue-count').text(rows.length);
+		// The badge on the tab itself stays a glanceable "how many need me
+		// right now" count - not the whole pipeline's size, which the
+		// table body below shows in full.
+		const readyCount = rows.filter(function(row) {
+			return row.stage === 'With Doctor';
+		}).length;
+		page.main.find('#queue-count').text(readyCount);
 		const container = page.main.find('#doctor-queue-container');
 		if (!rows.length) {
-			container.html(`<div class="empty-state"><i class="fa fa-stethoscope"></i><h4>${__('No patients waiting')}</h4><p>${__('Patients sent on from Nurse Station will show up here.')}</p></div>`);
+			container.html(`<div class="empty-state"><i class="fa fa-stethoscope"></i><h4>${__('No patients checked in')}</h4><p>${__('Patients checked in at Front Desk will show up here, along with their progress through Nurse Station and the lab.')}</p></div>`);
 			return;
 		}
 		let body = '';
@@ -446,20 +543,31 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 				row.vitals_fbs ? `FBS ${row.vitals_fbs}` : null,
 				row.vitals_rbs ? `RBS ${row.vitals_rbs}` : null
 			].filter(Boolean).join(' · ') || __('No vitals recorded');
+
+			let actionCell;
+			if (row.stage === 'With Doctor') {
+				actionCell = `<button class="btn btn-xs btn-success btn-start-consult" data-name="${row.name}">${__('Start Consultation')}</button>`;
+			} else if (row.stage === 'In Consultation') {
+				actionCell = `<button class="btn btn-xs btn-primary btn-start-consult" data-name="${row.name}">${__('Continue')}</button>`;
+			} else {
+				actionCell = `<span class="text-muted">—</span>`;
+			}
+
 			body += `
 				<tr>
-					<td>${row.encounter_time || ''}</td>
+					<td>${formatQueueTime(row.encounter_time)}</td>
 					<td>${row.patient_name || ''}</td>
 					<td>${row.practitioner_name || row.practitioner || ''}</td>
 					<td>${row.appointment_type || ''}</td>
+					<td>${stageBadge(row)}</td>
 					<td><small>${vitalsSummary}</small></td>
-					<td><button class="btn btn-xs btn-success btn-start-consult" data-name="${row.name}">${__('Start Consultation')}</button></td>
+					<td>${actionCell}</td>
 				</tr>
 			`;
 		});
 		container.html(`
 			<table class="queue-table">
-				<thead><tr><th>${__('Time')}</th><th>${__('Patient')}</th><th>${__('Practitioner')}</th><th>${__('Appointment Type')}</th><th>${__('Vitals')}</th><th></th></tr></thead>
+				<thead><tr><th>${__('Time')}</th><th>${__('Patient')}</th><th>${__('Practitioner')}</th><th>${__('Appointment Type')}</th><th>${__('Status')}</th><th>${__('Vitals')}</th><th></th></tr></thead>
 				<tbody>${body}</tbody>
 			</table>
 		`);

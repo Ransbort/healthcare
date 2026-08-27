@@ -372,6 +372,27 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 	`;
 	$(html).appendTo(page.main);
 
+	// Formats a Patient Appointment "Time" field for display, e.g. "12:27pm".
+	// These come back from the server in a couple of different raw shapes -
+	// a proper zero-padded "HH:MM:SS[.ffffff]" most of the time, but
+	// occasionally a Python timedelta's own str() instead ("0:03:14.657203",
+	// no leading zero on a single-digit hour). Only the hour/minute matter
+	// for display, and matching on \d+ rather than requiring two digits
+	// handles both shapes the same way. Own copy in each of Front Desk /
+	// Nurse Station / Doctor Station - same duplication this codebase
+	// already uses for other small cross-page helpers, so all three read
+	// the same "12:27pm" format without a shared module to keep in sync.
+	function formatQueueTime(value) {
+		if (!value) return '';
+		const match = String(value).match(/^(\d+):(\d{2})/);
+		if (!match) return value;
+		let hours = parseInt(match[1], 10) % 24;
+		const minutes = match[2];
+		const period = hours >= 12 ? 'pm' : 'am';
+		hours = hours % 12 || 12;
+		return `${hours}:${minutes}${period}`;
+	}
+
 	function statusBadge(status) {
 		const map = {
 			'Registered': 'badge-registered',
@@ -499,7 +520,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 				: `<button class="btn btn-xs btn-default btn-open-vitals" data-name="${row.name}" data-mode="edit">${__('Edit Vitals')}</button>`;
 			body += `
 				<tr class="nurse-row" data-name="${row.name}">
-					<td>${row.encounter_time || ''}</td>
+					<td>${formatQueueTime(row.encounter_time)}</td>
 					<td>${row.patient_name || ''}</td>
 					<td>${row.practitioner_name || row.practitioner || ''}</td>
 					<td>${row.appointment_type || ''}</td>
