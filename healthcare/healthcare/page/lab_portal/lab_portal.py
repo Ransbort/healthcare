@@ -515,7 +515,20 @@ def accept_lab_request(prescription_id, patient_id, encounter_id, lab_test_code)
 		frappe.throw(_("Lab Prescription row {0} not found on encounter {1}").format(prescription_id, encounter_id))
 
 	patient = frappe.get_doc("Patient", patient_id)
-	invoice = _create_lab_invoice(patient, lab_test_code, reference_dt="Patient Encounter", reference_dn=encounter_id)
+	# Bill against the specific Lab Prescription row, not the encounter as
+	# a whole - healthcare/utils.py's set_invoiced()/validate_invoiced_on_submit()
+	# stamp the "invoiced" flag onto whatever (reference_dt, reference_dn)
+	# the invoice item points at. Using "Patient Encounter" here used to
+	# flip the *encounter's own* invoiced flag (meant for its OP consulting
+	# charge, unrelated to labs) on submit of the FIRST lab test's invoice,
+	# which then made every other lab test requested off the same encounter
+	# fail with "already invoiced" even though only one test had actually
+	# been billed. Lab Prescription rows are per-line and already have
+	# their own core "invoiced" field, matching how accept_direct_lab_request()
+	# below bills against the specific Lab Test instead of anything shared.
+	invoice = _create_lab_invoice(
+		patient, lab_test_code, reference_dt="Lab Prescription", reference_dn=prescription_row.name
+	)
 
 	lab_test = frappe.get_doc(
 		{
