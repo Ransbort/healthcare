@@ -182,6 +182,26 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 
 			.pcd-note { font-size: 0.8rem; color: #8a94a6; line-height: 1.5; padding: 0 2px; }
 
+			/* =============================================
+			   LAB TEST(S) ONLY QUEUE (Check-In tab, Visit Type = Lab Test Only)
+			   ============================================= */
+			.lt-queue { margin: 4px 0 0; }
+			.lt-queue:empty { margin: 0; }
+			.lt-row {
+				display: flex; align-items: center; gap: 12px;
+				background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px;
+				padding: 10px 14px; margin-bottom: 8px;
+			}
+			.lt-row .lt-row-info { flex: 1; min-width: 0; }
+			.lt-row .lt-row-name { font-weight: 600; color: #2b2f38; font-size: 0.9rem; }
+			.lt-row .lt-row-comment { font-size: 0.78rem; color: #8a94a6; margin-top: 1px; }
+			.lt-row .lt-row-rate { font-weight: 600; color: #495057; font-size: 0.85rem; white-space: nowrap; }
+			.lt-row .lt-row-remove {
+				background: none; border: none; color: #c0392b; cursor: pointer;
+				font-size: 0.95rem; padding: 2px 6px; line-height: 1;
+			}
+			.lt-row .lt-row-remove:hover { color: #922b21; }
+
 			@media (max-width: 768px) {
 				.fd-wrapper { padding: 15px; }
 				.form-grid, .form-grid-2 { grid-template-columns: 1fr; }
@@ -206,7 +226,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			<div class="tab-content active" id="checkin-tab">
 				<div class="fd-section">
 					<h5><i class="fa fa-id-card"></i> Patient</h5>
-					<div class="toggle-group">
+					<div class="toggle-group" id="patient-mode-toggle">
 						<button class="toggle-btn active" data-mode="existing">Existing Patient</button>
 						<button class="toggle-btn" data-mode="new">New Patient</button>
 					</div>
@@ -237,6 +257,14 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 				</div>
 
 				<div class="fd-section">
+					<h5><i class="fa fa-flag"></i> Visit Type</h5>
+					<div class="toggle-group" id="visit-type-toggle">
+						<button class="toggle-btn active" data-visit="consultation">${__('Consultation')}</button>
+						<button class="toggle-btn" data-visit="lab_only">${__('Lab Test(s) Only')}</button>
+					</div>
+				</div>
+
+				<div class="fd-section" id="consultation-section">
 					<h5><i class="fa fa-sign-in"></i> Check-In</h5>
 					<p class="fd-hint">
 						${__('Pick a booked appointment to check it in, or leave it blank for a walk-in with no prior booking.')}
@@ -256,6 +284,24 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 					</div>
 					<button class="btn btn-success btn-lg" id="create-consultation-btn">
 						<i class="fa fa-check"></i> Check In &amp; Bill
+					</button>
+				</div>
+
+				<div class="fd-section" id="lab-only-section" style="display:none;">
+					<h5><i class="fa fa-flask"></i> Lab Test(s)</h5>
+					<p class="fd-hint">
+						${__('For a patient who only needs lab work - no appointment or consultation required.')}
+					</p>
+					<div class="form-grid-2">
+						<div data-fieldname="lt_test"></div>
+						<div data-fieldname="lt_comment"></div>
+					</div>
+					<button class="btn btn-sm btn-secondary" id="add-lab-test-btn">
+						<i class="fa fa-plus"></i> ${__('Add Test')}
+					</button>
+					<div class="lt-queue" id="lab-test-queue"></div>
+					<button class="btn btn-success btn-lg" id="book-lab-only-btn" style="margin-top:14px;">
+						<i class="fa fa-check"></i> ${__('Book Lab Test(s)')}
 					</button>
 				</div>
 			</div>
@@ -339,8 +385,8 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	// search-as-you-type, which we need to keep).
 	ci_patient.new_doc = function(txt) {
 		checkinMode = 'new';
-		page.main.find('.toggle-btn').removeClass('active');
-		page.main.find('.toggle-btn[data-mode="new"]').addClass('active');
+		page.main.find('#patient-mode-toggle .toggle-btn').removeClass('active');
+		page.main.find('#patient-mode-toggle .toggle-btn[data-mode="new"]').addClass('active');
 		page.main.find('#existing-patient-block').hide();
 		page.main.find('#new-patient-block').show();
 		page.main.find('#patient-fee-warning').hide();
@@ -555,8 +601,8 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 					// case "New Patient" was left active from a previous
 					// walk-in.
 					checkinMode = 'existing';
-					page.main.find('.toggle-btn').removeClass('active');
-					page.main.find('.toggle-btn[data-mode="existing"]').addClass('active');
+					page.main.find('#patient-mode-toggle .toggle-btn').removeClass('active');
+					page.main.find('#patient-mode-toggle .toggle-btn[data-mode="existing"]').addClass('active');
 					page.main.find('#existing-patient-block').show();
 					page.main.find('#new-patient-block').hide();
 					ci_patient.set_value(doc.patient || '');
@@ -692,11 +738,198 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	});
 	ci_fee.refresh();
 
+	// =============================================
+	// LAB TEST(S) ONLY (Visit Type = "Lab Test Only")
+	// =============================================
+	// For a patient who's only coming in for lab work - no appointment, no
+	// vitals, no doctor. Reuses the same Patient panel above (existing/
+	// new patient, registration + confirmation flow all unchanged) but
+	// skips practitioner/appointment-type/check-in entirely and books
+	// straight through Lab Portal's own create_lab_request() - the exact
+	// same direct-request mechanism Lab Portal's "New Lab Request" dialog
+	// already offers, just surfaced here too so front-desk staff don't
+	// have to register the patient on this page and then switch over to
+	// Lab Portal to request the test. No Patient Appointment is ever
+	// created for this path - the patient never enters queue_status at
+	// all, they just show up in Lab Portal's Pending Labs (already
+	// invoiced) once booked here, same as any other direct lab request.
+	let visitType = 'consultation';
+	let labTestQueue = [];
+	let labTestTemplates = [];
+	let lt_test = null;
+
+	let lt_comment = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="lt_comment"]'),
+		df: { fieldtype: 'Data', fieldname: 'lt_comment', label: 'Comment (Optional)' },
+		render_input: true
+	});
+	lt_comment.refresh();
+
+	// Fetched once on load - the exact same call, and the exact same
+	// {label, value} Select-options shape, Lab Portal's own "New Lab
+	// Request" dialog builds its lab_test_code field from (see
+	// openNewLabRequestDialog() in lab_portal.js) - so both pages always
+	// offer the same active templates at the same price.
+	//
+	// The lt_test control itself is deliberately only created here, once
+	// the options are already in hand - not created empty up front and
+	// patched with set_df_property()/refresh() afterwards. A Dialog's
+	// Select field is the exact same ControlSelect either way, but that
+	// working pattern always builds the field with its final options from
+	// the start; a plain page control's <select> doesn't reliably
+	// re-render its options from a later property update the same way, so
+	// creating it fresh here avoids that gap entirely rather than fighting it.
+	frappe.call({
+		method: 'healthcare.healthcare.page.lab_portal.lab_portal.get_lab_test_templates',
+		callback: function(r) {
+			labTestTemplates = r.message || [];
+			const options = labTestTemplates.map(function(t) {
+				return { label: `${t.lab_test_name || t.name} (${format_currency(t.rate)})`, value: t.name };
+			});
+
+			lt_test = frappe.ui.form.make_control({
+				parent: page.main.find('[data-fieldname="lt_test"]'),
+				df: { fieldtype: 'Select', fieldname: 'lt_test', label: 'Lab Test', options: options },
+				render_input: true
+			});
+			lt_test.refresh();
+		}
+	});
+
+	function renderLabTestQueue() {
+		const $queue = page.main.find('#lab-test-queue');
+		$queue.empty();
+
+		labTestQueue.forEach(function(row, idx) {
+			const $row = $(`
+				<div class="lt-row">
+					<div class="lt-row-info">
+						<div class="lt-row-name">${frappe.utils.escape_html(row.label)}</div>
+						${row.comment ? `<div class="lt-row-comment">${frappe.utils.escape_html(row.comment)}</div>` : ''}
+					</div>
+					<div class="lt-row-rate">${format_currency(row.rate)}</div>
+					<button class="lt-row-remove" data-idx="${idx}" title="${__('Remove')}"><i class="fa fa-times"></i></button>
+				</div>
+			`);
+			$row.find('.lt-row-remove').on('click', function() {
+				labTestQueue.splice(idx, 1);
+				renderLabTestQueue();
+			});
+			$queue.append($row);
+		});
+
+		const count = labTestQueue.length;
+		page.main.find('#book-lab-only-btn').html(
+			count
+				? `<i class="fa fa-check"></i> ${__('Book Lab Test(s)')} (${count})`
+				: `<i class="fa fa-check"></i> ${__('Book Lab Test(s)')}`
+		);
+	}
+
+	page.main.find('#add-lab-test-btn').on('click', function() {
+		if (!lt_test) {
+			frappe.show_alert({ message: __('Lab tests are still loading - try again in a moment'), indicator: 'orange' }, 5);
+			return;
+		}
+		const code = lt_test.get_value();
+		if (!code) {
+			frappe.show_alert({ message: __('Please select a lab test to add'), indicator: 'orange' }, 5);
+			return;
+		}
+		const template = labTestTemplates.find(function(t) { return t.name === code; });
+		labTestQueue.push({
+			code: code,
+			label: (template && template.lab_test_name) || code,
+			rate: (template && template.rate) || 0,
+			comment: lt_comment.get_value() || ''
+		});
+		lt_test.set_value('');
+		lt_comment.set_value('');
+		renderLabTestQueue();
+	});
+
+	// Visit Type toggle - switches which of the two fd-sections below the
+	// Patient panel is shown; doesn't touch checkinMode/the patient panel
+	// itself, which stays exactly the same for either visit type.
+	page.main.find('#visit-type-toggle .toggle-btn').on('click', function() {
+		visitType = $(this).data('visit');
+		page.main.find('#visit-type-toggle .toggle-btn').removeClass('active');
+		$(this).addClass('active');
+		if (visitType === 'lab_only') {
+			page.main.find('#consultation-section').hide();
+			page.main.find('#lab-only-section').show();
+		} else {
+			page.main.find('#lab-only-section').hide();
+			page.main.find('#consultation-section').show();
+		}
+	});
+
+	// Front desk's access to direct lab requests specifically can be
+	// turned off via Healthcare Settings (front_desk_lab_requests_enabled) -
+	// Laboratory User/System Manager are never affected, so only bother
+	// asking the server when the current user might actually be gated
+	// (mirrors lab_portal.js's identical check for its own "New Lab
+	// Request" button). Hiding the toggle option is a UX nicety only -
+	// create_lab_request() enforces this for real, same as it always has.
+	if (!frappe.user.has_role('Laboratory User') && !frappe.user.has_role('System Manager')
+		&& frappe.user.has_role('Healthcare Receptionist')) {
+		frappe.call({
+			method: 'healthcare.healthcare.page.lab_portal.lab_portal.get_front_desk_lab_request_access',
+			callback: function(r) {
+				if (!r.message) {
+					page.main.find('#visit-type-toggle .toggle-btn[data-visit="lab_only"]').hide();
+				}
+			}
+		});
+	}
+
+	page.main.find('#book-lab-only-btn').on('click', function() {
+		const patient = checkinMode === 'existing' ? ci_patient.get_value() : registeredPatient;
+
+		if (!patient) {
+			frappe.show_alert({ message: __('Please select or register a patient first'), indicator: 'orange' }, 5);
+			return;
+		}
+		if (!labTestQueue.length) {
+			frappe.show_alert({ message: __('Please add at least one lab test'), indicator: 'orange' }, 5);
+			return;
+		}
+
+		// One server call books every queued test as a single visit - see
+		// book_lab_only_visit() in front_desk.py. It's whole-request
+		// atomic (a failure partway through rolls everything in this
+		// booking back, not just the failed row), and logs one Front Desk
+		// Entry covering all of them, rather than one per test.
+		const payload = labTestQueue.map(function(row) {
+			return { lab_test_code: row.code, lab_test_comment: row.comment || null };
+		});
+
+		frappe.call({
+			method: 'healthcare.healthcare.page.front_desk.front_desk.book_lab_only_visit',
+			args: {
+				patient: patient,
+				lab_tests: payload
+			},
+			freeze: true,
+			freeze_message: __('Booking lab test(s)...'),
+			callback: function(r) {
+				if (r.message && r.message.status === 'Success') {
+					frappe.show_alert({
+						message: __('{0} lab test(s) booked - invoice(s) raised, ready for payment at the Cashier Portal.', [(r.message.created || []).length]),
+						indicator: 'green'
+					}, 8);
+					labTestQueue = [];
+					renderLabTestQueue();
+				}
+			}
+		});
+	});
+
 	// Existing/New toggle
-	page.main.find('.toggle-btn').on('click', function() {
+	page.main.find('#patient-mode-toggle .toggle-btn').on('click', function() {
 		const mode = $(this).data('mode');
 		checkinMode = mode;
-		page.main.find('.toggle-btn').removeClass('active');
+		page.main.find('#patient-mode-toggle .toggle-btn').removeClass('active');
 		$(this).addClass('active');
 		if (mode === 'existing') {
 			page.main.find('#existing-patient-block').show();
@@ -881,8 +1114,8 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 							}
 
 							checkinMode = 'existing';
-							page.main.find('.toggle-btn').removeClass('active');
-							page.main.find('.toggle-btn[data-mode="existing"]').addClass('active');
+							page.main.find('#patient-mode-toggle .toggle-btn').removeClass('active');
+							page.main.find('#patient-mode-toggle .toggle-btn[data-mode="existing"]').addClass('active');
 							page.main.find('#existing-patient-block').show();
 							page.main.find('#new-patient-block').hide();
 							ci_patient.set_value(registeredPatient);

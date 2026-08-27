@@ -223,6 +223,16 @@ def start_consultation(appointment):
 	}
 
 
+# save_quick_consultation() used to live here, saving a small hand-picked
+# subset of fields (symptoms/diagnosis/encounter_comment) posted from a
+# custom quick-capture Dialog. Removed: doctor_station.js now opens the
+# Patient Encounter's real, complete form embedded directly inside a
+# Dialog (see openEncounterDialog() there) instead of a hand-built
+# stand-in, so saving goes through that form's own frm.save() - the same
+# frappe.client.save path every ordinary form uses - and there's no
+# custom subset-of-fields endpoint left to maintain here.
+
+
 # The Lab tab that used to live here (trial-candidate patients parked at
 # queue_status "With Lab" - see sports_complex's route_trial_after_vitals()/
 # create_trial_lab_panel()) has moved to Lab Portal's own Trial Labs tab -

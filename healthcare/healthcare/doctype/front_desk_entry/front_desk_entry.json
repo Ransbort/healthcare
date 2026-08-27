@@ -1,0 +1,201 @@
+{
+ "doctype": "DocType",
+ "name": "Front Desk Entry",
+ "module": "Healthcare",
+ "custom": 0,
+ "istable": 0,
+ "issingle": 0,
+ "is_submittable": 0,
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "autoname": "FDE-.YYYY.-.#####",
+ "naming_rule": "Expression (old style)",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1,
+ "description": "Auto-created log of what Front Desk did for a patient - one row per check-in/walk-in (queue_status pipeline) or per lab-only booking (Lab Test(s) Only visit type). Nothing here is meant to be entered by hand; front_desk.py inserts these itself (ignore_permissions=True) right alongside the actions they record, purely for reporting/audit - filter by Entry Type/Patient/Entry Date to see what Front Desk has been doing.",
+ "field_order": [
+  "entry_type",
+  "patient",
+  "patient_name",
+  "column_break_1",
+  "entry_datetime",
+  "logged_by",
+  "consultation_section",
+  "appointment",
+  "is_walkin",
+  "practitioner",
+  "practitioner_name",
+  "column_break_2",
+  "medical_department",
+  "appointment_type",
+  "consultation_fee",
+  "consultation_invoice",
+  "lab_section",
+  "lab_tests",
+  "column_break_3",
+  "lab_test_count",
+  "lab_total"
+ ],
+ "fields": [
+  {
+   "fieldname": "entry_type",
+   "fieldtype": "Select",
+   "options": "\nConsultation\nLab Only",
+   "label": "Entry Type",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "patient",
+   "fieldtype": "Link",
+   "options": "Patient",
+   "label": "Patient",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "patient_name",
+   "fieldtype": "Data",
+   "label": "Patient Name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "entry_datetime",
+   "fieldtype": "Datetime",
+   "label": "Entry Date/Time",
+   "reqd": 1,
+   "default": "now",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "logged_by",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Logged By",
+   "default": "__user",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consultation_section",
+   "fieldtype": "Section Break",
+   "label": "Consultation Details",
+   "depends_on": "eval:doc.entry_type=='Consultation'"
+  },
+  {
+   "fieldname": "appointment",
+   "fieldtype": "Link",
+   "options": "Patient Appointment",
+   "label": "Appointment",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_walkin",
+   "fieldtype": "Check",
+   "label": "Walk-in (no prior booking)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "practitioner",
+   "fieldtype": "Link",
+   "options": "Healthcare Practitioner",
+   "label": "Practitioner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "practitioner_name",
+   "fieldtype": "Data",
+   "label": "Practitioner Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "medical_department",
+   "fieldtype": "Link",
+   "options": "Medical Department",
+   "label": "Department",
+   "read_only": 1
+  },
+  {
+   "fieldname": "appointment_type",
+   "fieldtype": "Link",
+   "options": "Appointment Type",
+   "label": "Appointment Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consultation_fee",
+   "fieldtype": "Currency",
+   "label": "Consultation Fee",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consultation_invoice",
+   "fieldtype": "Link",
+   "options": "Sales Invoice",
+   "label": "Consultation Invoice",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lab_section",
+   "fieldtype": "Section Break",
+   "label": "Lab Test Details",
+   "depends_on": "eval:doc.entry_type=='Lab Only'"
+  },
+  {
+   "fieldname": "lab_tests",
+   "fieldtype": "Table",
+   "options": "Front Desk Entry Lab Test",
+   "label": "Lab Tests"
+  },
+  {
+   "fieldname": "column_break_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "lab_test_count",
+   "fieldtype": "Int",
+   "label": "Lab Test Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lab_total",
+   "fieldtype": "Currency",
+   "label": "Lab Total",
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "share": 1,
+   "report": 1
+  },
+  {
+   "role": "Healthcare Receptionist",
+   "read": 1,
+   "print": 1,
+   "email": 1,
+   "export": 1,
+   "report": 1
+  }
+ ]
+}

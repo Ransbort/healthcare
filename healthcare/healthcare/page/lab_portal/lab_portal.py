@@ -697,6 +697,13 @@ def get_lab_test_detail(lab_test_name):
 	"""Loads one Lab Test's own result-entry rows for the "Open Lab Test"
 	popup. Each row keeps its own child-table `idx` so save_lab_test_result()
 	below can write a saved value back onto the exact same row it came from.
+
+	`docstatus` is included so the dialog can tell a truly-finalized test
+	(docstatus 1, submitted by save_lab_test_result() below) apart from
+	one just marked Completed on a draft the old way - see lab_portal.js,
+	which opens this read-only once a test is actually submitted, rather
+	than letting the tech hit Save and get a raw "cannot edit a submitted
+	document" error back from the submit attempt.
 	"""
 	lab_test = frappe.get_doc("Lab Test", lab_test_name)
 
@@ -732,6 +739,7 @@ def get_lab_test_detail(lab_test_name):
 		"template": lab_test.template,
 		"lab_test_name": lab_test.lab_test_name,
 		"status": lab_test.status,
+		"docstatus": lab_test.docstatus,
 		"result_type": result_type,
 		"items": items,
 		"lab_test_comment": lab_test.lab_test_comment,
@@ -744,10 +752,32 @@ def save_lab_test_result(lab_test_name, result_type, items, lab_test_comment=Non
 	Lab Test doc. `items` is the list get_lab_test_detail() handed the
 	dialog, each with its `result_value` possibly changed by the user -
 	matched back to its row by `idx`, not position, in case rows were
-	reordered on some other path in between. Only flips status to
-	Completed when the caller explicitly asks for that (mark_completed) -
-	saving a partial result along the way shouldn't silently complete the
-	test.
+	reordered on some other path in between.
+
+	A partial save (mark_completed falsy) is a plain draft save - nothing
+	here should silently complete or lock the test just because a value
+	was entered along the way.
+
+	Marking complete (mark_completed truthy) actually SUBMITS the
+	document (docstatus 0 -> 1) rather than just flipping the status
+	field on a draft, the way this used to work. Lab Test is a
+	submittable doctype (is_submittable: 1) and its own on_submit()
+	(lab_test.py, unmodified) is what Healthcare core relies on to
+	finalize a result: it sets submitted_date, re-sets status to
+	"Completed" itself (so the line below is for clarity/intent, not
+	load-bearing - on_submit would set it either way), flips the linked
+	Service Request to "completed-Request Status", and runs its own
+	submit-time checks - validate_result_values() (mandatory result
+	values are now actually enforced, where the old .save()-only path
+	silently let them through blank) and validate_nursing_tasks() (a
+	template with a required nursing checklist now genuinely blocks
+	completion until those tasks are done, same as completing straight
+	from the Lab Test form would). Either of those raising is a real
+	validation failure for the lab tech to address, not a bug - it was
+	only ever silently skipped before because this went through .save()
+	instead of .submit(), so it may surface for tests that would
+	previously have been marked "Completed" without actually satisfying
+	either check.
 	"""
 	if isinstance(items, str):
 		items = frappe.parse_json(items)
@@ -768,7 +798,13 @@ def save_lab_test_result(lab_test_name, result_type, items, lab_test_comment=Non
 	if frappe.utils.cint(mark_completed):
 		lab_test.status = "Completed"
 		lab_test.result_date = lab_test.result_date or today()
-
-	lab_test.save(ignore_permissions=True)
+		# submit(), not save() - see the docstring above for why this
+		# distinction actually matters here. ignore_permissions matches
+		# the ignore_permissions=True the plain save() below has always
+		# used - submit() takes it as a flag rather than a kwarg.
+		lab_test.flags.ignore_permissions = True
+		lab_test.submit()
+	else:
+		lab_test.save(ignore_permissions=True)
 
 	return {"status": "Success", "lab_test_status": lab_test.status}

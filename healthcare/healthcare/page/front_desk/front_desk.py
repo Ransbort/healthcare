@@ -5,6 +5,11 @@ from healthcare.healthcare.utils import get_appointment_billing_item_and_rate
 from healthcare.healthcare.doctype.appointment_type.appointment_type import (
 	get_billing_details as get_appointment_type_billing_row,
 )
+from healthcare.healthcare.doctype.front_desk_entry.front_desk_entry import (
+	log_consultation_entry,
+	log_lab_only_entry,
+)
+from healthcare.healthcare.page.lab_portal.lab_portal import create_lab_request
 
 
 def _get_billing_detail_or_none(doc):
@@ -904,6 +909,13 @@ def _finalize_checkin(appt, patient, consultation_fee):
 			"encounter": None,
 		})
 
+	# One Front Desk Entry per check-in, paid or not - see
+	# front_desk_entry.py for why this is a log() call rather than
+	# anything that could fail the check-in itself. Read back from the
+	# database (not the in-memory `appt`) since the db_set() calls above
+	# and inside _invoice_consultation() never update it in place.
+	log_consultation_entry(appt.name)
+
 	return {
 		"status": "Success",
 		"appointment": appt.name,
@@ -1373,3 +1385,82 @@ def on_patient_encounter_submit(doc, method=None):
 
 	if doc.appointment:
 		frappe.db.set_value("Patient Appointment", doc.appointment, "queue_status", "Completed")
+
+
+# =============================================
+# LAB TEST(S) ONLY (Check-In tab's "Lab Test(s) Only" visit type)
+# =============================================
+# For a patient who's only coming in for lab work - no appointment, no
+# vitals, no doctor. Reuses Lab Portal's own create_lab_request() for the
+# actual Lab Test + Sales Invoice creation (a plain in-app import, not a
+# cross-app call the way sports_complex's healthcare_integration.py has to
+# reach into this app - front_desk.py and lab_portal.py are both part of
+# the same healthcare app) rather than duplicating that logic here, then
+# logs one Front Desk Entry covering every test booked in the same visit.
+
+@frappe.whitelist()
+def book_lab_only_visit(patient, lab_tests):
+	"""Book one or more lab tests for a patient with no appointment at
+	all - see front_desk.js's "Lab Test(s) Only" visit type, which is the
+	only caller. `lab_tests` is a JSON list of {lab_test_code,
+	lab_test_comment} - one entry per row the operator queued up on the
+	page.
+
+	Each test is created via create_lab_request() exactly as if a
+	Laboratory User had requested it from Lab Portal directly - same
+	Draft Lab Test, same immediate Sales Invoice, same front_desk_lab_
+	requests_enabled gate (re-checked there, not duplicated here). The
+	only thing this adds on top is bundling every test from one Check-In
+	tab submission into a single Front Desk Entry log row (see
+	front_desk_entry.py's log_lab_only_entry()) instead of one row per
+	test, so a five-test visit reads as one visit in the log, not five.
+
+	Deliberately whole-request atomic: raising partway through (e.g. a
+	template with no linked Item/rate configured) rolls back every test
+	already created in this same call along with it, courtesy of Frappe's
+	own per-request transaction - nothing here explicitly commits early.
+	A booking either lands in full or not at all; there's no partial
+	state for staff to spot and clean up by hand.
+	"""
+	_require_tab_access("checkin")
+
+	import json
+	if isinstance(lab_tests, str):
+		lab_tests = json.loads(lab_tests)
+
+	if not patient:
+		frappe.throw(_("Please select a patient"))
+	if not lab_tests:
+		frappe.throw(_("Please add at least one lab test"))
+
+	patient_name = frappe.db.get_value("Patient", patient, "patient_name")
+
+	rows = []
+	for row in lab_tests:
+		code = row.get("lab_test_code")
+		comment = row.get("lab_test_comment")
+		if not code:
+			continue
+
+		result = create_lab_request(patient, code, comment)
+
+		# The rate actually charged (the created invoice's own total),
+		# not a separate Item Price lookup that could have since changed
+		# or briefly disagree with what create_lab_request() billed.
+		rate = frappe.db.get_value("Sales Invoice", result.get("invoice_name"), "grand_total")
+
+		rows.append({
+			"template": code,
+			"lab_test_name": frappe.db.get_value("Lab Test Template", code, "lab_test_name") or code,
+			"rate": rate,
+			"lab_test": result.get("lab_test_name"),
+			"invoice": result.get("invoice_name"),
+		})
+
+	log_lab_only_entry(patient, patient_name, rows)
+
+	return {
+		"status": "Success",
+		"patient": patient,
+		"created": rows,
+	}

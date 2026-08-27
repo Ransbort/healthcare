@@ -576,31 +576,126 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 			frappe.call({
 				method: 'healthcare.healthcare.page.doctor_station.doctor_station.start_consultation',
 				args: { appointment: name },
+				freeze: true,
 				callback: function(r) {
 					if (r.message && r.message.status === 'Success') {
-						const encounterName = r.message.encounter;
-						// Creates the Patient Encounter (if one doesn't already
-						// exist for this appointment) and opens it.
-						//
-						// Two SPA-navigation attempts here (loading the
-						// doctype's metadata via frappe.model.with_doctype()
-						// first, then separately trying set_route().then()
-						// + clear_doc()/reload_doc()) both still left the
-						// page half-rendered until a manual refresh - the
-						// generic footer (Comments/Activity) shows, but the
-						// doctype's own field layout/dashboard doesn't.
-						// Both rely on set_route()'s returned promise lining
-						// up with cur_frm actually pointing at the new doc
-						// by the time it resolves, and that assumption isn't
-						// holding here. A real browser navigation sidesteps
-						// the whole SPA route/render pipeline - it's the
-						// exact same code path a manual refresh takes, so
-						// there's no internal timing to get wrong.
-						window.location.href = frappe.utils.get_form_link('Patient Encounter', encounterName);
+						openEncounterDialog(r.message.encounter);
 					}
 				}
 			});
 		});
+	}
+
+	// =============================================
+	// ENCOUNTER DIALOG (Start Consultation)
+	// =============================================
+	// start_consultation() above still creates/finds the Patient Encounter
+	// exactly as before - the only thing that's changed is what happens
+	// with the result. This has gone through three approaches now:
+	//   1. A full browser navigation straight to the Encounter's own form
+	//      (frappe.set_route()-based SPA navigation left the page
+	//      half-rendered, so a real navigation was used instead).
+	//   2. A small hand-built "quick capture" dialog (symptoms/diagnosis/
+	//      a notes field only, posted to a custom save endpoint) - worked,
+	//      but didn't give the doctor the rest of the form.
+	//   3. A genuine frappe.ui.form.Form constructed directly inside the
+	//      dialog's own body (`in_form: true`, the same flag core's own
+	//      QuickEntryForm passes) - rendered nothing at all in practice
+	//      (confirmed by testing: an empty dialog body, no Save button).
+	//      Most likely cause: frm.refresh(name) expects the document
+	//      already sitting in frappe.model.locals - on a routed Form page
+	//      that's guaranteed by the router before refresh() ever runs,
+	//      but nothing here was doing that equivalent fetch first. Rather
+	//      than patch that one gap and stay exposed to whatever else a
+	//      hand-built embedded frm needs that a normal page load provides
+	//      for free (this app has already shipped one broken guess about
+	//      Frappe internals this session - the "Labs" dashboard card's
+	//      add_transactions() call - so a second unverified guess here
+	//      isn't a good trade), this now uses approach 4 below instead.
+	//   4. An <iframe> pointed at the exact same URL "Open Full Page"
+	//      already uses. This is the one guaranteed-correct option
+	//      available without live access to a running site to test
+	//      against: same-origin, same route, same code path Desk always
+	//      uses to render a Form page - real tabs (Details / Trial
+	//      Medical Exam / Encounter Details / Notes), real dashboard
+	//      cards (Orders / Inpatient / Notes, Tasks & Vitals / Medical
+	//      Records), real Save/Submit, nothing reimplemented or
+	//      guessed at here. The only real downside is weight (a second
+	//      full Desk boot inside the iframe) and no in-dialog "Save"
+	//      button of our own - the iframe's own toolbar already has one.
+	function openEncounterDialog(encounterName) {
+		const dialog = new frappe.ui.Dialog({
+			title: __('Patient Encounter'),
+			size: 'extra-large',
+			secondary_action_label: __('Open in New Tab'),
+			secondary_action: function() {
+				window.open(frappe.utils.get_form_link('Patient Encounter', encounterName), '_blank');
+			}
+		});
+
+		// This dialog's own footer bar (holding the "Open in New Tab"
+		// button above) added nothing worth the vertical space once the
+		// iframe below is doing all the real work - the secondary_action
+		// wiring stays (still reachable via dialog.secondary_action if
+		// ever needed), just the visible bar is trimmed.
+		dialog.$wrapper.find('.modal-footer').hide();
+
+		dialog.$wrapper.find('.modal-dialog').css('max-width', '95vw');
+		const $body = dialog.$wrapper.find('.modal-body');
+		$body.css({ padding: 0, height: '85vh', overflow: 'hidden' });
+		$body.html(
+			`<iframe src="${frappe.utils.get_form_link('Patient Encounter', encounterName)}" ` +
+			`style="width: 100%; height: 100%; border: 0;" title="${frappe.utils.escape_html(__('Patient Encounter'))}"></iframe>`
+		);
+
+		// The iframe loads a full, independent Desk boot - same-origin, so
+		// its own document is reachable once loaded - and that includes
+		// Desk's persistent left workspace sidebar, confirmed (via
+		// inspecting the actual rendered markup) to be
+		// `.body-sidebar-container` - "expanded" is just the state class
+		// Desk toggles on it when open, not a separate element. Hidden
+		// here with injected CSS rather than by reimplementing the app
+		// shell; the older guessed selectors are kept alongside it as
+		// harmless fallbacks (CSS, unlike JS, never throws for an
+		// unmatched selector) in case a different Desk view uses a
+		// different wrapper.
+		$body.find('iframe').on('load', function() {
+			try {
+				const idoc = this.contentDocument;
+				if (!idoc) return;
+				const style = idoc.createElement('style');
+				style.textContent = `
+					.body-sidebar-container,
+					#sidebar, .desk-sidebar, .body-sidebar, #body-sidebar,
+					.sidebar-section, .layout-side-section.desk-sidebar,
+					.navbar, #navbar {
+						display: none !important;
+					}
+					.content, .main-section, .page-container,
+					.container-fluid, .col.layout-main-section-wrapper {
+						margin-left: 0 !important;
+						padding-left: 0 !important;
+					}
+				`;
+				idoc.head.appendChild(style);
+			} catch (e) {
+				// Same-origin should make this reachable, but if a timing
+				// or permission quirk ever throws here, the dialog still
+				// works fine with the full Desk chrome just left visible.
+				console.error('openEncounterDialog: could not trim iframe chrome', e);
+			}
+		});
+
+		dialog.show();
+
+		// Nothing here can know when the doctor is actually done inside
+		// the iframe (same-origin, but its own Desk instance/router - not
+		// worth reaching into) - refresh the queue whenever the dialog
+		// closes instead, same as every other action on this page that
+		// might have changed queue_status.
+		dialog.onhide = function() {
+			loadAll();
+		};
 	}
 
 	// =============================================

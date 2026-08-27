@@ -2033,30 +2033,57 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                     return;
                 }
 
+                // Once mark_completed actually submits the test (see
+                // save_lab_test_result() in lab_portal.py), a submitted
+                // (docstatus 1) test is finalized and Frappe won't allow
+                // editing it in place any more - reopening it here shows
+                // everything read-only with no Save action instead of
+                // letting the tech fill in a "correction" that would only
+                // fail with a raw submit-transition error when they hit
+                // Save. Fixing an already-submitted result now goes
+                // through the full Lab Test form (Cancel, then Amend), the
+                // same as correcting any other submitted document in this
+                // app - not something this quick popup tries to do itself.
+                const isFinalized = detail.docstatus === 1;
+
                 const itemFields = detail.items.map(function(item) {
                     return {
                         fieldtype: detail.result_type === 'normal' ? 'Data' : 'Small Text',
                         fieldname: `item_${item.idx}`,
                         label: item.label + (item.uom ? ` (${item.uom})` : ''),
                         default: item.result_value,
+                        read_only: isFinalized ? 1 : 0,
                         description: item.normal_range ? __('Normal range: {0}', [item.normal_range]) : undefined
                     };
                 });
 
-                const dialog = new frappe.ui.Dialog({
+                const dialogFields = [
+                    { fieldtype: 'Data', fieldname: 'patient_name', label: __('Patient'), default: detail.patient_name, read_only: 1 },
+                    { fieldtype: 'Column Break' },
+                    { fieldtype: 'Data', fieldname: 'status', label: __('Status'), default: detail.status, read_only: 1 },
+                    { fieldtype: 'Section Break', label: __('Results') },
+                    ...itemFields,
+                    { fieldtype: 'Section Break' },
+                    { fieldtype: 'Small Text', fieldname: 'lab_test_comment', label: __('Comments'), default: detail.lab_test_comment, read_only: isFinalized ? 1 : 0 }
+                ];
+
+                if (isFinalized) {
+                    dialogFields.push({
+                        fieldtype: 'HTML',
+                        options: `<div class="text-muted" style="margin-top: 10px;">${__('This test has been submitted and its results are final. To correct a value, cancel and amend it from the full Lab Test form.')}</div>`
+                    });
+                } else {
+                    dialogFields.push({ fieldtype: 'Check', fieldname: 'mark_completed', label: __('Mark test as Completed'), default: detail.status === 'Completed' ? 1 : 0 });
+                }
+
+                const dialogOpts = {
                     title: `${__('Open Lab Test')} - ${detail.lab_test_name || detail.template}`,
-                    fields: [
-                        { fieldtype: 'Data', fieldname: 'patient_name', label: __('Patient'), default: detail.patient_name, read_only: 1 },
-                        { fieldtype: 'Column Break' },
-                        { fieldtype: 'Data', fieldname: 'status', label: __('Status'), default: detail.status, read_only: 1 },
-                        { fieldtype: 'Section Break', label: __('Results') },
-                        ...itemFields,
-                        { fieldtype: 'Section Break' },
-                        { fieldtype: 'Small Text', fieldname: 'lab_test_comment', label: __('Comments'), default: detail.lab_test_comment },
-                        { fieldtype: 'Check', fieldname: 'mark_completed', label: __('Mark test as Completed'), default: detail.status === 'Completed' ? 1 : 0 }
-                    ],
-                    primary_action_label: __('Save'),
-                    primary_action: function(values) {
+                    fields: dialogFields
+                };
+
+                if (!isFinalized) {
+                    dialogOpts.primary_action_label = __('Save');
+                    dialogOpts.primary_action = function(values) {
                         const items = detail.items.map(function(item) {
                             return { idx: item.idx, result_value: values[`item_${item.idx}`] };
                         });
@@ -2077,8 +2104,10 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                                 if (onSaved) onSaved();
                             }
                         });
-                    }
-                });
+                    };
+                }
+
+                const dialog = new frappe.ui.Dialog(dialogOpts);
 
                 dialog.show();
             }
