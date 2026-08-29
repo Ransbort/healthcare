@@ -298,6 +298,10 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 flex: 1;
             }
 
+            .completed-filters .form-group {
+                margin-bottom: 0;
+            }
+
             .scrollable-content {
                 max-height: calc(100vh - 400px);
                 overflow-y: auto;
