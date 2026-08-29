@@ -1,15 +1,16 @@
 {
  "actions": [],
+ "allow_import": 1,
  "autoname": "field:spa_type_name",
- "creation": "2026-07-21 00:00:00.000000",
+ "creation": "2026-07-21 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "spa_type_name",
-  "item",
   "column_break_st01",
-  "rate",
-  "enabled"
+  "enabled",
+  "section_break_st02",
+  "durations"
  ],
  "fields": [
   {
@@ -21,23 +22,8 @@
    "unique": 1
   },
   {
-   "description": "Billable Item used when this Spa Type is added to an invoice or booking.",
-   "fieldname": "item",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "Item",
-   "options": "Item"
-  },
-  {
    "fieldname": "column_break_st01",
    "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "rate",
-   "fieldtype": "Currency",
-   "in_list_view": 1,
-   "label": "Rate",
-   "options": "Currency"
   },
   {
    "default": "1",
@@ -45,11 +31,23 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Enabled"
+  },
+  {
+   "fieldname": "section_break_st02",
+   "fieldtype": "Section Break",
+   "label": "Pricing by Duration"
+  },
+  {
+   "description": "Add one row per duration/price tier this spa type is offered at (e.g. 45 min / 60 min / 90 min, each with its own rate). Leave Duration blank (or 0) on a row for a single fixed-price service with no duration options.",
+   "fieldname": "durations",
+   "fieldtype": "Table",
+   "label": "Durations & Pricing",
+   "options": "Spa Type Duration"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-21 00:00:00.000000",
+ "modified": "2026-08-29 08:12:04.319785",
  "modified_by": "Administrator",
  "module": "Healthcare",
  "name": "Spa Type",
@@ -69,6 +67,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

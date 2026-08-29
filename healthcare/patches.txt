@@ -16,6 +16,7 @@ healthcare.patches.v16_0.validate_inpatient_billables
 healthcare.patches.v16_0.rename_time_block_to_practitioner_availability
 healthcare.patches.v16_0.setup_portal_settings
 healthcare.patches.v16_0.add_patient_role_permissions
+healthcare.patches.v16_0.stash_spa_type_rates
 
 [post_model_sync]
 healthcare.patches.v15_0.rename_field_medical_department_in_appoitment_type_service_item
@@ -30,3 +31,4 @@ healthcare.patches.v16_0.set_template_dn_and_template_dt_in_appointment
 healthcare.patches.v15_0.add_discharge_summary_to_patient_history
 healthcare.patches.v15_0.add_custom_fields_if_not_exists
 healthcare.patches.v16_0.create_emergency_masters
+healthcare.patches.v16_0.migrate_spa_type_rates_to_durations

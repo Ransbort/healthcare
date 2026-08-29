@@ -265,7 +265,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 
 			.booking-form-grid {
 				display: grid;
-				grid-template-columns: 1fr 1fr 1fr;
+				grid-template-columns: 1fr 1fr 1fr 1fr;
 				gap: 15px;
 				margin-bottom: 15px;
 			}
@@ -475,6 +475,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 										</th>
 										<th>#</th>
 										<th>Spa Type</th>
+										<th style="text-align: center; width: 100px;">Duration</th>
 										<th style="text-align: center; width: 80px;">Qty</th>
 										<th style="text-align: right;">Rate</th>
 										<th style="text-align: right;">Amount</th>
@@ -488,6 +489,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 							</div>
 							<div class="add-service-row">
 								<div data-fieldname="add_spa_type_field"></div>
+								<div data-fieldname="add_spa_duration_field" style="display: none;"></div>
 								<button class="btn btn-primary btn-sm" id="add-service-btn">
 									<i class="fa fa-plus"></i> Add
 								</button>
@@ -524,6 +526,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 						<div data-fieldname="bk_client_name"></div>
 						<div data-fieldname="bk_phone"></div>
 						<div data-fieldname="bk_spa_type"></div>
+						<div data-fieldname="bk_duration" style="display: none;"></div>
 					</div>
 					<div class="booking-form-row2">
 						<div data-fieldname="bk_date"></div>
@@ -600,16 +603,72 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	posting_date_field.refresh();
 	posting_date_field.set_value(frappe.datetime.get_today());
 
+	let addDurationOptions = [];
+
 	let add_spa_type_field = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="add_spa_type_field"]'),
 		df: {
 			fieldtype: 'Link', fieldname: 'add_spa_type_field', options: 'Spa Type',
 			label: 'Select Spa Type', placeholder: 'Search spa service...',
-			get_query: function() { return { filters: { enabled: 1 } }; }
+			get_query: function() { return { filters: { enabled: 1 } }; },
+			onchange: function() {
+				loadDurationOptions(
+					add_spa_type_field.get_value(),
+					add_spa_duration_field,
+					'[data-fieldname="add_spa_duration_field"]',
+					function(options) { addDurationOptions = options; }
+				);
+			}
 		},
 		render_input: true
 	});
 	add_spa_type_field.refresh();
+
+	let add_spa_duration_field = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="add_spa_duration_field"]'),
+		df: {
+			fieldtype: 'Select', fieldname: 'add_spa_duration_field',
+			label: 'Duration', options: '', placeholder: 'Select duration'
+		},
+		render_input: true
+	});
+	add_spa_duration_field.refresh();
+
+	// Shared by the "add service" row and the booking form: fetches the
+	// duration/price tiers configured on a Spa Type and populates the given
+	// Select control. Hides the control (and auto-picks the tier) when
+	// there's zero or one option, since there's nothing to choose.
+	function loadDurationOptions(spa_type, field, wrapperSelector, onLoaded) {
+		if (!spa_type) {
+			page.main.find(wrapperSelector).hide();
+			field.set_value('');
+			onLoaded([]);
+			return;
+		}
+		frappe.call({
+			method: 'healthcare.healthcare.page.spa_portal.spa_portal.get_spa_type_durations',
+			args: { spa_type: spa_type },
+			callback: function(r) {
+				const durations = r.message || [];
+				const options = durations.map(d => ({
+					label: d.duration_minutes ? `${d.duration_minutes} min - ${format_currency(d.rate)}` : `Fixed - ${format_currency(d.rate)}`,
+					rate: d.rate,
+					item: d.item,
+					duration_minutes: d.duration_minutes || 0
+				}));
+				field.df.options = options.map(o => o.label).join('\n');
+				field.refresh();
+				if (options.length > 1) {
+					page.main.find(wrapperSelector).show();
+					field.set_value('');
+				} else {
+					page.main.find(wrapperSelector).hide();
+					field.set_value(options.length ? options[0].label : '');
+				}
+				onLoaded(options);
+			}
+		});
+	}
 
 	// =============================================
 	// CONTROLS — Invoices Tab
@@ -645,16 +704,36 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	});
 	bk_phone.refresh();
 
+	let bookingDurationOptions = [];
+
 	let bk_spa_type = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="bk_spa_type"]'),
 		df: {
 			fieldtype: 'Link', fieldname: 'bk_spa_type', options: 'Spa Type', label: 'Spa Type',
 			placeholder: 'Select service', reqd: 1,
-			get_query: function() { return { filters: { enabled: 1 } }; }
+			get_query: function() { return { filters: { enabled: 1 } }; },
+			onchange: function() {
+				loadDurationOptions(
+					bk_spa_type.get_value(),
+					bk_duration,
+					'[data-fieldname="bk_duration"]',
+					function(options) { bookingDurationOptions = options; }
+				);
+			}
 		},
 		render_input: true
 	});
 	bk_spa_type.refresh();
+
+	let bk_duration = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="bk_duration"]'),
+		df: {
+			fieldtype: 'Select', fieldname: 'bk_duration',
+			label: 'Duration', options: '', placeholder: 'Select duration'
+		},
+		render_input: true
+	});
+	bk_duration.refresh();
 
 	let bk_date = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="bk_date"]'),
@@ -697,19 +776,36 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	// =============================================
 	function addService(spa_type_name) {
 		if (!spa_type_name) return;
-		const existing = spaServices.find(s => s.spa_type === spa_type_name);
-		if (existing) {
-			frappe.show_alert({ message: __('"{0}" has already been added', [existing.spa_type_name]), indicator: 'orange' }, 5);
-			add_spa_type_field.set_value('');
+		if (addDurationOptions.length > 1 && !add_spa_duration_field.get_value()) {
+			frappe.show_alert({ message: __('Please select a duration'), indicator: 'orange' }, 5);
 			return;
 		}
-		frappe.db.get_value('Spa Type', spa_type_name, ['rate', 'spa_type_name'], (r) => {
-			if (r) {
-				const rate = r.rate || 0;
-				spaServices.push({ spa_type: spa_type_name, spa_type_name: r.spa_type_name || spa_type_name, qty: 1, rate: rate, amount: rate, checked: false });
-				renderServicesTable();
-				add_spa_type_field.set_value('');
-			}
+		if (!addDurationOptions.length) {
+			frappe.show_alert({ message: __('This spa type has no pricing configured yet'), indicator: 'red' }, 5);
+			return;
+		}
+		const selectedLabel = add_spa_duration_field.get_value();
+		const durationOpt = addDurationOptions.find(o => o.label === selectedLabel) || addDurationOptions[0];
+
+		const existing = spaServices.find(s => s.spa_type === spa_type_name && s.duration_minutes === durationOpt.duration_minutes);
+		if (existing) {
+			frappe.show_alert({ message: __('"{0}" has already been added', [existing.spa_type_name]), indicator: 'orange' }, 5);
+			return;
+		}
+		frappe.db.get_value('Spa Type', spa_type_name, ['spa_type_name'], (r) => {
+			const rate = durationOpt.rate || 0;
+			spaServices.push({
+				spa_type: spa_type_name,
+				spa_type_name: (r && r.spa_type_name) || spa_type_name,
+				duration_minutes: durationOpt.duration_minutes,
+				duration_label: durationOpt.duration_minutes ? `${durationOpt.duration_minutes} min` : 'Fixed',
+				qty: 1, rate: rate, amount: rate, checked: false
+			});
+			renderServicesTable();
+			add_spa_type_field.set_value('');
+			add_spa_duration_field.set_value('');
+			page.main.find('[data-fieldname="add_spa_duration_field"]').hide();
+			addDurationOptions = [];
 		});
 	}
 
@@ -742,6 +838,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 					<td><input type="checkbox" class="service-checkbox service-row-check" data-idx="${idx}" ${service.checked ? 'checked' : ''}></td>
 					<td>${idx + 1}</td>
 					<td>${service.spa_type_name}</td>
+					<td style="text-align: center;">${service.duration_label || ''}</td>
 					<td style="text-align: center;"><input type="number" class="qty-input" data-idx="${idx}" value="${service.qty}" min="1" step="1"></td>
 					<td style="text-align: right;">${format_currency(service.rate)}</td>
 					<td style="text-align: right;">${format_currency(service.amount)}</td>
@@ -760,7 +857,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 			$(this).val(qty);
 			spaServices[idx].qty = qty;
 			spaServices[idx].amount = qty * spaServices[idx].rate;
-			$(this).closest('tr').find('td:eq(5)').text(format_currency(spaServices[idx].amount));
+			$(this).closest('tr').find('td:eq(6)').text(format_currency(spaServices[idx].amount));
 			updateTotal();
 		});
 		tbody.find('.btn-remove-service').on('click', function() {
@@ -829,7 +926,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 			frappe.show_alert({ message: __('Please add at least one spa service'), indicator: 'orange' }, 5);
 			return;
 		}
-		const services = spaServices.map(s => ({ spa_type: s.spa_type, qty: s.qty }));
+		const services = spaServices.map(s => ({ spa_type: s.spa_type, duration_minutes: s.duration_minutes, qty: s.qty }));
 		frappe.call({
 			method: 'healthcare.healthcare.page.spa_portal.spa_portal.create_spa_invoice',
 			args: {
@@ -849,6 +946,9 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 					customer_field.set_value('');
 					patient_field.set_value('');
 					add_spa_type_field.set_value('');
+					add_spa_duration_field.set_value('');
+					page.main.find('[data-fieldname="add_spa_duration_field"]').hide();
+					addDurationOptions = [];
 					posting_date_field.set_value(frappe.datetime.get_today());
 					spaServices = [];
 					renderServicesTable();
@@ -965,10 +1065,24 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 			frappe.show_alert({ message: __('Please fill in all required fields'), indicator: 'orange' }, 5);
 			return;
 		}
+		if (bookingDurationOptions.length > 1 && !bk_duration.get_value()) {
+			frappe.show_alert({ message: __('Please select a duration'), indicator: 'orange' }, 5);
+			return;
+		}
+		if (!bookingDurationOptions.length) {
+			frappe.show_alert({ message: __('This spa type has no pricing configured yet'), indicator: 'red' }, 5);
+			return;
+		}
+		const selectedDurationLabel = bk_duration.get_value();
+		const bookingDurationOpt = bookingDurationOptions.find(o => o.label === selectedDurationLabel) || bookingDurationOptions[0];
 
 		frappe.call({
 			method: 'healthcare.healthcare.page.spa_portal.spa_portal.create_spa_booking',
-			args: { client_name: clientName, phone: phone, spa_type: spaType, booking_date: date, booking_time: time, notes: notes },
+			args: {
+				client_name: clientName, phone: phone, spa_type: spaType,
+				duration_minutes: bookingDurationOpt.duration_minutes,
+				booking_date: date, booking_time: time, notes: notes
+			},
 			freeze: true,
 			freeze_message: __('Creating booking...'),
 			callback: function(r) {
@@ -977,6 +1091,9 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 					bk_client_name.set_value('');
 					bk_phone.set_value('');
 					bk_spa_type.set_value('');
+					bk_duration.set_value('');
+					page.main.find('[data-fieldname="bk_duration"]').hide();
+					bookingDurationOptions = [];
 					bk_date.set_value(frappe.datetime.get_today());
 					bk_time.set_value('');
 					bk_notes.set_value('');
@@ -1020,7 +1137,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 				<tr>
 					<td>${idx+1}</td>
 					<td><strong>${bk.client_name}</strong><br><small style="color:#6c757d;">${bk.phone}</small></td>
-					<td>${bk.spa_type}</td>
+					<td>${bk.spa_type}${bk.duration_minutes ? ' (' + bk.duration_minutes + ' min)' : ''}</td>
 					<td>${bk.booking_time}</td>
 					<td>${getStatusBadge(bk.status)}</td>
 					<td>
@@ -1117,7 +1234,8 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 							else if (bk.status === 'Cancelled') statusClass = ' status-cancelled';
 							else if (bk.status === 'No Show') statusClass = ' status-no-show';
 							const timeStr = bk.booking_time ? bk.booking_time.substring(0,5) : '';
-							eventsHtml += `<div class="cal-event${statusClass}" title="${bk.client_name} - ${bk.spa_type} (${bk.status})">${timeStr} ${bk.client_name}</div>`;
+							const durationSuffix = bk.duration_minutes ? ` ${bk.duration_minutes}min` : '';
+							eventsHtml += `<div class="cal-event${statusClass}" title="${bk.client_name} - ${bk.spa_type}${durationSuffix} (${bk.status})">${timeStr} ${bk.client_name}</div>`;
 						});
 					}
 

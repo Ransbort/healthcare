@@ -6,10 +6,13 @@ Backend for the Spa Portal page (page/spa_portal/spa_portal.js).
 
 ASSUMPTIONS TO VERIFY:
 
-- `Spa Type` doctype exists with fields: spa_type_name, rate, item
-  (Link -> Item, billed on the invoice), enabled (Check).
+- `Spa Type` doctype exists with fields: spa_type_name, enabled (Check),
+  and a `durations` child table (Spa Type Duration) holding one row per
+  duration/price tier: duration_minutes (0 = fixed/no duration options),
+  rate, item (Link -> Item, billed on the invoice).
 - `Spa Booking` doctype exists with fields: client_name, phone, spa_type
-  (Link -> Spa Type), booking_date, booking_time, notes, status
+  (Link -> Spa Type), duration_minutes (Int, must match one of that Spa
+  Type's duration rows), booking_date, booking_time, notes, status
   (Select: Scheduled/Completed/Cancelled/No Show).
 - Sales Invoices created here are tagged `custom_invoice_from = "Spa"`,
   mirroring the same custom field pharmacy.py's Sales Orders use
@@ -24,13 +27,57 @@ import json
 
 import frappe
 from frappe import _
-from frappe.utils import flt, today
+from frappe.utils import cint, flt, today
+
+
+def _get_spa_type_duration(spa_type, duration_minutes):
+	"""
+	Look up the priced duration/tier row for a Spa Type. duration_minutes=0
+	means "the fixed/no-duration-options tier". Throws if that Spa Type has
+	no pricing configured for the requested duration.
+	"""
+	duration_minutes = cint(duration_minutes) or 0
+
+	row = frappe.db.get_value(
+		"Spa Type Duration",
+		{"parent": spa_type, "parenttype": "Spa Type", "duration_minutes": duration_minutes},
+		["rate", "item"],
+		as_dict=True,
+	)
+	if not row:
+		frappe.throw(
+			_("Spa Type {0} has no pricing configured for duration {1} min").format(
+				spa_type, duration_minutes
+			)
+		)
+	return row
+
+
+@frappe.whitelist()
+def get_spa_type_durations(spa_type):
+	"""
+	Returns the duration/price tiers configured for a Spa Type, ordered by
+	duration. Used by the portal to populate the duration selector once a
+	Spa Type has been picked (add-service row and booking form).
+	"""
+	if not spa_type:
+		return []
+
+	return frappe.get_all(
+		"Spa Type Duration",
+		filters={"parent": spa_type, "parenttype": "Spa Type"},
+		fields=["duration_minutes", "rate", "item"],
+		order_by="duration_minutes asc",
+	)
 
 
 @frappe.whitelist()
 def create_spa_invoice(spa_services, customer=None, patient=None, posting_date=None):
 	"""
-	spa_services: JSON string / list of {"spa_type": <Spa Type name>, "qty": <int>}
+	spa_services: JSON string / list of
+	  {"spa_type": <Spa Type name>, "duration_minutes": <int>, "qty": <int>}
+	duration_minutes should be 0 (or omitted) for a spa type with a single
+	fixed-price tier.
 	"""
 
 	if isinstance(spa_services, str):
@@ -51,20 +98,21 @@ def create_spa_invoice(spa_services, customer=None, patient=None, posting_date=N
 	for service in spa_services:
 		spa_type = service.get("spa_type")
 		qty = flt(service.get("qty")) or 1
+		duration_minutes = cint(service.get("duration_minutes")) or 0
 
-		spa_type_doc = frappe.db.get_value(
-			"Spa Type", spa_type, ["item", "rate", "spa_type_name"], as_dict=True
-		)
-		if not spa_type_doc:
+		spa_type_name = frappe.db.get_value("Spa Type", spa_type, "spa_type_name")
+		if not spa_type_name:
 			frappe.throw(_("Spa Type {0} not found").format(spa_type))
 
-		item_code = spa_type_doc.item or spa_type
-		rate = spa_type_doc.rate or 0
+		duration_row = _get_spa_type_duration(spa_type, duration_minutes)
+
+		item_code = duration_row.item or spa_type
+		rate = duration_row.rate or 0
 
 		items.append(
 			{
 				"item_code": item_code,
-				"item_name": spa_type_doc.spa_type_name or spa_type,
+				"item_name": spa_type_name,
 				"qty": qty,
 				"rate": rate,
 			}
@@ -125,9 +173,16 @@ def get_spa_invoices(date=None):
 
 
 @frappe.whitelist()
-def create_spa_booking(client_name, phone, spa_type, booking_date, booking_time, notes=None):
+def create_spa_booking(
+	client_name, phone, spa_type, booking_date, booking_time, duration_minutes=0, notes=None
+):
 	if not (client_name and phone and spa_type and booking_date and booking_time):
 		frappe.throw(_("Please fill in all required fields"))
+
+	duration_minutes = cint(duration_minutes) or 0
+	# Validates the duration against the Spa Type's configured tiers and
+	# throws a clear error if it doesn't match one.
+	_get_spa_type_duration(spa_type, duration_minutes)
 
 	booking = frappe.get_doc(
 		{
@@ -135,6 +190,7 @@ def create_spa_booking(client_name, phone, spa_type, booking_date, booking_time,
 			"client_name": client_name,
 			"phone": phone,
 			"spa_type": spa_type,
+			"duration_minutes": duration_minutes,
 			"booking_date": booking_date,
 			"booking_time": booking_time,
 			"notes": notes,
@@ -168,6 +224,7 @@ def get_spa_bookings(date=None, from_date=None, to_date=None):
 			"client_name",
 			"phone",
 			"spa_type",
+			"duration_minutes",
 			"booking_date",
 			"booking_time",
 			"status",
