@@ -54,11 +54,22 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 
 	const style = `
 		<style>
-			.fd-wrapper { padding: 20px; max-width: 1400px; margin: 0 auto; }
+			.fd-wrapper {
+				height: calc(100vh - 60px);
+				display: flex;
+				flex-direction: column;
+				overflow: hidden;
+				box-sizing: border-box;
+				padding: 20px;
+				max-width: 1400px;
+				margin: 0 auto;
+				width: 100%;
+			}
 
 			.tabs-section {
 				display: flex; gap: 10px; margin-bottom: 20px;
 				border-bottom: 2px solid #e0e0e0; align-items: center; flex-wrap: wrap;
+				flex-shrink: 0;
 			}
 			.tab-btn {
 				padding: 12px 24px; background: transparent; border: none;
@@ -68,8 +79,19 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			}
 			.tab-btn:hover { color: var(--primary-color); }
 			.tab-btn.active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
-			.tab-content { display: none; }
-			.tab-content.active { display: block; }
+			.tab-content { display: none; flex: 1; min-height: 0; overflow: hidden; }
+			.tab-content.active { display: flex; flex-direction: column; }
+
+			/* Each tab supplies its own scroll region (a fixed filter bar
+			   above it, or - for Check-In - the whole tab's content) so the
+			   .fd-wrapper itself never scrolls at the page level - see its
+			   own comment. */
+			.scrollable-content {
+				flex: 1;
+				min-height: 0;
+				overflow-y: auto;
+				padding-right: 4px;
+			}
 
 			.fd-section {
 				background: white; border: 1px solid #d1d8dd; border-radius: 12px;
@@ -102,6 +124,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			.filter-bar {
 				display: flex; gap: 15px; margin-bottom: 20px; padding: 15px;
 				background: #f8f9fa; border-radius: 8px; align-items: end;
+				flex-shrink: 0;
 			}
 			.filter-bar .frappe-control, .filter-bar .form-group { margin-bottom: 0; flex: 0 0 200px; }
 			.filter-bar .btn { flex-shrink: 0; }
@@ -225,6 +248,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 
 			<!-- CHECK-IN TAB -->
 			<div class="tab-content active" id="checkin-tab">
+				<div class="scrollable-content">
 				<div class="fd-section">
 					<h5><i class="fa fa-id-card"></i> Patient</h5>
 					<div class="toggle-group" id="patient-mode-toggle">
@@ -305,6 +329,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 						<i class="fa fa-check"></i> ${__('Book Lab Test(s)')}
 					</button>
 				</div>
+				</div>
 			</div>
 
 			<!-- QUEUE TAB -->
@@ -312,13 +337,16 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 				<div class="filter-bar">
 					<div data-fieldname="q_date"></div>
 					<div data-fieldname="q_to_date"></div>
+					<div data-fieldname="q_queue_search"></div>
 					<button class="btn btn-primary" id="queue-filter-btn"><i class="fa fa-filter"></i> Filter</button>
 					<button class="btn btn-default" id="queue-refresh-btn"><i class="fa fa-refresh"></i> Refresh</button>
 					<button class="btn btn-success" id="bulk-send-nurse-btn" style="display:none;">
 						<i class="fa fa-forward"></i> Send All to Nurse (<span id="bulk-send-nurse-count">0</span>)
 					</button>
 				</div>
+				<div class="scrollable-content">
 				<div class="queue-table-container" id="queue-table-container"></div>
+				</div>
 			</div>
 		</div>
 	`;
@@ -1271,7 +1299,39 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	});
 	q_to_date.refresh();
 
+	// Live filter over whatever's already loaded for the day/range - the
+	// queue is already a small, already-fetched list, so this is a
+	// client-side re-render rather than a round trip. Same pattern as
+	// Doctor Station's Doctor Queue search / Nurse Station's Vitals Queue
+	// search.
+	let q_queue_search = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="q_queue_search"]'),
+		df: {
+			fieldtype: 'Data',
+			fieldname: 'q_queue_search',
+			label: 'Search',
+			placeholder: __('Search patient or practitioner')
+		},
+		render_input: true
+	});
+	q_queue_search.refresh();
+
 let currentQueueRows = [];
+let queueSearchTerm = '';
+
+function applyQueueSearch(rows) {
+	const term = queueSearchTerm.trim().toLowerCase();
+	if (!term) return rows;
+	return rows.filter(function(row) {
+		return [row.patient_name, row.patient, row.practitioner_name, row.practitioner, row.appointment_type]
+			.some(function(value) { return (value || '').toLowerCase().includes(term); });
+	});
+}
+
+	q_queue_search.$input.on('input', frappe.utils.debounce(function() {
+		queueSearchTerm = q_queue_search.get_value();
+		renderQueueTable(applyQueueSearch(currentQueueRows));
+	}, 200));
 
 	page.main.find('#queue-filter-btn, #queue-refresh-btn').on('click', function() { loadQueue(); });
 
@@ -1350,7 +1410,7 @@ function loadQueue() {
 			args: { date: fromDate, to_date: toDate || null },
 			callback: function(r) {
 				currentQueueRows = r.message || [];
-				renderQueueTable(currentQueueRows);
+				renderQueueTable(applyQueueSearch(currentQueueRows));
 
 				const eligibleCount = currentQueueRows.filter(row => row.queue_status === 'Paid - Awaiting Vitals').length;
 				if (eligibleCount > 0) {
@@ -1366,7 +1426,8 @@ function loadQueue() {
 	function renderQueueTable(rows) {
 		const container = page.main.find('#queue-table-container');
 		if (!rows.length) {
-			container.html(`<div class="empty-state"><i class="fa fa-inbox"></i><h4>${__('No checked-in patients')}</h4></div>`);
+			const searched = !!queueSearchTerm.trim();
+			container.html(`<div class="empty-state"><i class="fa fa-inbox"></i><h4>${searched ? __('No matching patients') : __('No checked-in patients')}</h4></div>`);
 			return;
 		}
 		let body = '';

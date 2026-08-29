@@ -51,12 +51,20 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 	// =============================================
 	const style = `
 		<style>
-			.ns-wrapper { padding: 20px; max-width: 1400px; margin: 0 auto; }
+			.ns-wrapper {
+				height: calc(100vh - 60px);
+				display: flex;
+				flex-direction: column;
+				overflow: hidden;
+				box-sizing: border-box;
+				padding: 20px;
+				max-width: 1400px;
+				margin: 0 auto;
+				width: 100%;
+			}
 
 			.sticky-header {
-				position: sticky;
-				top: 0;
-				z-index: 100;
+				flex-shrink: 0;
 				background: var(--fg-color, white);
 				padding-bottom: 16px;
 				margin-bottom: 20px;
@@ -151,6 +159,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 				padding: 16px 20px;
 				margin-bottom: 16px;
 				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+				flex-shrink: 0;
 			}
 
 			.search-input-group {
@@ -238,25 +247,50 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			.tab-btn.active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
 			.tab-btn .badge { margin-left: 8px; font-size: 0.78rem; padding: 3px 8px; }
 
-			.tab-content { display: none; }
-			.tab-content.active { display: block; }
+			.tab-content { display: none; flex: 1; min-height: 0; overflow: hidden; }
+			.tab-content.active { display: flex; flex-direction: column; }
 
-			/* No fixed height/overflow here on purpose - Nurse Station's
-			   lists are short enough to just flow with the page rather
-			   than scroll in their own clipped box (unlike Laboratory
-			   Portal's card grids, this was producing a stray inner
-			   scrollbar even for a single row). */
+			/* .ns-wrapper is now a fixed-height flex column (see its own
+			   comment) instead of flowing/scrolling with the page, so this
+			   needs its own bounded scroll region again - unlike the old
+			   max-height-based attempt this note used to describe, sizing
+			   via flex (rather than a guessed max-height) doesn't leave a
+			   stray scrollbar when a list is short enough to fit without
+			   one. */
+			/* This is also the element the sticky table header below sticks
+			   within - it has to be the actual overflow:auto scroller
+			   itself (not a plain wrapper around one, and not
+			   .queue-table-container either), since a sticky element
+			   sticks relative to its nearest ancestor with
+			   overflow != visible; putting rounded-corner clipping on a
+			   container between the two (as .queue-table-container used
+			   to have) breaks it - see doctor_station.js's version of this
+			   same fix for the full writeup. Corner-rounding lives here
+			   instead. */
 			.scrollable-content {
+				flex: 1;
+				min-height: 0;
+				overflow-y: auto;
+				overflow-x: hidden;
+				border-radius: 8px;
 				padding-right: 4px;
 			}
 
 			/* --- Tables --- */
 			.queue-table { width: 100%; border-collapse: collapse; }
 			.queue-table-container {
-				background: white; border-radius: 8px; overflow: hidden;
+				background: white;
 				box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 			}
-			.queue-table thead { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+			.queue-table thead {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				position: sticky;
+				top: 0;
+				z-index: 10;
+			}
+			.queue-table thead th:first-child { border-top-left-radius: 8px; }
+			.queue-table thead th:last-child { border-top-right-radius: 8px; }
 			.queue-table th { padding: 12px; text-align: left; font-weight: 600; font-size: 0.9rem; }
 			.queue-table td { padding: 12px; font-size: 0.9rem; border-bottom: 1px solid #e9ecef; }
 			.queue-table tbody tr:hover { background: #f8f9fa; }
@@ -334,6 +368,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 					<div class="search-input-group">
 						<div data-fieldname="n_date" style="flex: 0 0 200px;"></div>
 						<div data-fieldname="n_to_date" style="flex: 0 0 200px;"></div>
+						<div data-fieldname="n_queue_search" style="flex: 0 0 220px;"></div>
 						<button class="btn btn-primary" id="nurse-refresh-date-btn" style="flex-shrink: 0;">
 							<i class="fa fa-filter"></i> ${__('Filter')}
 						</button>
@@ -468,6 +503,39 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 	});
 	n_to_date.refresh();
 
+	// Live filter over whatever's already loaded for the day/range - the
+	// queue is already a small, already-fetched list, so this is a
+	// client-side re-render rather than a round trip. Same pattern as
+	// Doctor Station's Doctor Queue search.
+	let n_queue_search = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="n_queue_search"]'),
+		df: {
+			fieldtype: 'Data',
+			fieldname: 'n_queue_search',
+			label: 'Search',
+			placeholder: __('Search patient or practitioner')
+		},
+		render_input: true
+	});
+	n_queue_search.refresh();
+
+	let currentNurseRows = [];
+	let nurseQueueSearchTerm = '';
+
+	function applyNurseQueueSearch(rows) {
+		const term = nurseQueueSearchTerm.trim().toLowerCase();
+		if (!term) return rows;
+		return rows.filter(function(row) {
+			return [row.patient_name, row.patient, row.practitioner_name, row.practitioner, row.appointment_type]
+				.some(function(value) { return (value || '').toLowerCase().includes(term); });
+		});
+	}
+
+	n_queue_search.$input.on('input', frappe.utils.debounce(function() {
+		nurseQueueSearchTerm = n_queue_search.get_value();
+		renderNurseTable(applyNurseQueueSearch(currentNurseRows));
+	}, 200));
+
 	page.main.find('#nurse-refresh-date-btn').on('click', function() { loadNurseQueue(); });
 
 	page.main.find('#nurse-clear-all-btn').on('click', function() {
@@ -511,17 +579,21 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			method: 'healthcare.healthcare.page.nurse_station.nurse_station.get_nurse_queue',
 			args: { date: fromDate, to_date: toDate || null },
 			callback: function(r) {
-				renderNurseTable(r.message || []);
+				currentNurseRows = r.message || [];
+				renderNurseTable(applyNurseQueueSearch(currentNurseRows));
 				markLoadDone();
 			}
 		});
 	}
 
 	function renderNurseTable(rows) {
-		page.main.find('#vitals-count').text(rows.length);
+		// Total loaded queue size, not scoped down by whatever's currently
+		// typed into the search box - that only affects the table below.
+		page.main.find('#vitals-count').text(currentNurseRows.length);
 		const container = page.main.find('#nurse-table-container');
 		if (!rows.length) {
-			container.html(`<div class="empty-state"><i class="fa fa-heartbeat"></i><h4>${__('Nurse queue is empty')}</h4><p>${__('Patients checked in and awaiting vitals will show up here.')}</p></div>`);
+			const searched = !!nurseQueueSearchTerm.trim();
+			container.html(`<div class="empty-state"><i class="fa fa-heartbeat"></i><h4>${searched ? __('No matching patients') : __('Nurse queue is empty')}</h4><p>${searched ? __('Try a different name.') : __('Patients checked in and awaiting vitals will show up here.')}</p></div>`);
 			return;
 		}
 		let body = '';

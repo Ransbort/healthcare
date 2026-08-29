@@ -175,6 +175,33 @@ def _normalize_direct_row(row):
 	}
 
 
+def _resolve_practitioner_names(rows):
+	"""The queue rows below only ever carry `practitioner` as the raw
+	Healthcare Practitioner Link value (e.g. "HLC-PRAC-2026-00003") - none
+	of the SQL/get_all calls that build them join across to the
+	practitioner's own display name. Bulk-resolve it here and stamp a
+	`practitioner_name` key onto each row, same shape/relationship
+	front_desk.py's _resolve_patient_full_names() has to `patient`/
+	`patient_name`. Mutates rows in place; falls back to leaving
+	practitioner_name unset (the front-end falls back to the raw ID) if a
+	practitioner was deleted or renamed out from under a stale row.
+	"""
+	practitioner_ids = list({row["practitioner"] for row in rows if row.get("practitioner")})
+	if not practitioner_ids:
+		return
+
+	practitioners = frappe.get_all(
+		"Healthcare Practitioner",
+		filters={"name": ["in", practitioner_ids]},
+		fields=["name", "practitioner_name"],
+	)
+	name_map = {p["name"]: p["practitioner_name"] for p in practitioners}
+
+	for row in rows:
+		if row.get("practitioner") in name_map:
+			row["practitioner_name"] = name_map[row["practitioner"]]
+
+
 @frappe.whitelist()
 def get_therapy_types():
 	"""Active Therapy Types for the 'New Therapy Request' picker."""
@@ -342,6 +369,7 @@ def get_requested_therapies(search_patient=None, search_encounter=None, search_d
 
 	if search_encounter:
 		# Direct requests have no encounter to match.
+		_resolve_practitioner_names(encounter_rows)
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(search_patient, search_encounter, search_date)
@@ -367,7 +395,9 @@ def get_requested_therapies(search_patient=None, search_encounter=None, search_d
 		as_dict=True,
 	)
 
-	return encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+	rows = encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+	_resolve_practitioner_names(rows)
+	return rows
 
 
 @frappe.whitelist()
@@ -414,6 +444,7 @@ def get_pending_therapies(search_patient=None, search_encounter=None, search_dat
 		row["payment_status"] = "Paid" if row.pop("invoice_status", None) == "Paid" else "Unpaid"
 
 	if search_encounter:
+		_resolve_practitioner_names(encounter_rows)
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(search_patient, search_encounter, search_date)
@@ -451,7 +482,9 @@ def get_pending_therapies(search_patient=None, search_encounter=None, search_dat
 		row["payment_status"] = "Paid" if r.get("invoice_status") == "Paid" else "Unpaid"
 		normalized_direct.append(row)
 
-	return encounter_rows + normalized_direct
+	rows = encounter_rows + normalized_direct
+	_resolve_practitioner_names(rows)
+	return rows
 
 
 @frappe.whitelist()
@@ -493,6 +526,7 @@ def get_completed_therapies(search_patient=None, search_encounter=None, filter_d
 	)
 
 	if search_encounter:
+		_resolve_practitioner_names(encounter_rows)
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(
@@ -520,7 +554,9 @@ def get_completed_therapies(search_patient=None, search_encounter=None, filter_d
 		as_dict=True,
 	)
 
-	return encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+	rows = encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+	_resolve_practitioner_names(rows)
+	return rows
 
 
 @frappe.whitelist()
@@ -889,6 +925,7 @@ def get_scheduled_sessions(from_date=None, to_date=None, date=None, practitioner
 	)
 	for s in sessions:
 		s["status"] = "Completed" if s.docstatus == 1 else "Scheduled"
+	_resolve_practitioner_names(sessions)
 	return sessions
 
 

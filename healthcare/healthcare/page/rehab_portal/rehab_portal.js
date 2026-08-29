@@ -46,15 +46,19 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     const style = `
         <style>
             .rehab-wrapper {
+                height: calc(100vh - 60px);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                box-sizing: border-box;
                 padding: 20px;
                 max-width: 1400px;
                 margin: 0 auto;
+                width: 100%;
             }
 
             .sticky-header {
-                position: sticky;
-                top: 0;
-                z-index: 100;
+                flex-shrink: 0;
                 background: white;
                 padding-bottom: 16px;
                 margin-bottom: 20px;
@@ -287,6 +291,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             .completed-filters {
                 display: flex;
                 flex-wrap: wrap;
+                flex-shrink: 0;
                 gap: 15px;
                 margin-bottom: 20px;
                 padding: 15px;
@@ -308,7 +313,8 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             }
 
             .scrollable-content {
-                max-height: calc(100vh - 400px);
+                flex: 1;
+                min-height: 0;
                 overflow-y: auto;
                 padding-right: 10px;
             }
@@ -333,10 +339,14 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
 
             .tab-content {
                 display: none;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
             }
 
             .tab-content.active {
-                display: block;
+                display: flex;
+                flex-direction: column;
             }
 
             .rehab-cards-container {
@@ -623,9 +633,29 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             /* --- Schedule tab --- */
             .schedule-toolbar {
                 display: flex;
+                flex-shrink: 0;
                 justify-content: space-between;
                 align-items: center;
                 margin-bottom: 16px;
+            }
+
+            /* #schedule-tab is a flex column (.tab-content.active) whose
+               only non-toolbar children are these two mutually-exclusive
+               views - give each the remaining vertical space directly
+               instead of leaving them to grow unbounded, which used to be
+               what forced the whole page (not just this tab) to scroll. */
+            #sched-list-view {
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+
+            #sched-calendar-view {
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
             }
 
             .sched-view-toggle {
@@ -1657,7 +1687,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                             <div class="info-row">
                                 <i class="fa fa-user-md"></i>
                                 <span class="info-label">Practitioner:</span>
-                                <span class="info-value">${therapy.practitioner}</span>
+                                <span class="info-value">${therapy.practitioner_name || therapy.practitioner}</span>
                             </div>
                             ` : ''}
                             ${therapy.diagnosis ? `
@@ -1724,7 +1754,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                     <td><strong>${therapy.therapy_type || '-'}</strong><br><small>Sessions: ${therapy.no_of_sessions || 'N/A'}</small></td>
                     <td>${therapy.patient_name}<br><small>${therapy.patient}</small></td>
                     <td>${frappe.datetime.str_to_user(therapy.encounter_date)}</td>
-                    <td>${therapy.practitioner || '-'}</td>
+                    <td>${therapy.practitioner_name || therapy.practitioner || '-'}</td>
                     <td>${therapy.diagnosis || '-'}</td>
                     <td>${therapy.priority ? `<span class="priority-badge ${priorityClass}">${therapy.priority}</span>` : '-'}</td>
                     <td>
@@ -1826,7 +1856,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                             <div class="info-row">
                                 <i class="fa fa-user-md"></i>
                                 <span class="info-label">Practitioner:</span>
-                                <span class="info-value">${therapy.practitioner}</span>
+                                <span class="info-value">${therapy.practitioner_name || therapy.practitioner}</span>
                             </div>
                             ` : ''}
                             ${therapy.diagnosis ? `
@@ -2072,7 +2102,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                             <div class="info-row">
                                 <i class="fa fa-user-md"></i>
                                 <span class="info-label">Practitioner:</span>
-                                <span class="info-value">${therapy.practitioner}</span>
+                                <span class="info-value">${therapy.practitioner_name || therapy.practitioner}</span>
                             </div>
                             ` : ''}
                             ${therapy.diagnosis ? `
@@ -2140,7 +2170,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                     <td><strong>${therapy.therapy_type || '-'}</strong><br><small>Sessions: ${therapy.no_of_sessions || 'N/A'}</small></td>
                     <td>${therapy.patient_name}<br><small>${therapy.patient}</small></td>
                     <td>${frappe.datetime.str_to_user(therapy.encounter_date)}</td>
-                    <td>${therapy.practitioner || '-'}</td>
+                    <td>${therapy.practitioner_name || therapy.practitioner || '-'}</td>
                     <td>${therapy.diagnosis || '-'}</td>
                     <td>
                         <div class="rehab-list-actions">
@@ -2557,7 +2587,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                     <td><strong>${s.patient_name}</strong><br><small>${s.patient}</small></td>
                     <td>${s.therapy_type || '-'}</td>
                     <td>${s.start_time ? s.start_time.substring(0,5) : '-'}</td>
-                    <td>${s.practitioner || '-'}</td>
+                    <td>${s.practitioner_name || s.practitioner || '-'}</td>
                     <td>${statusBadge}</td>
                     <td>
                         <div class="rehab-list-actions">

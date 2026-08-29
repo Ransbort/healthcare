@@ -140,6 +140,35 @@ def _normalize_direct_row(row):
 	}
 
 
+def _resolve_practitioner_names(rows):
+	"""Encounter-sourced rows only ever carry `practitioner` as the raw
+	Healthcare Practitioner Link value (e.g. "HLC-PRAC-2026-00003") - none
+	of the SQL above joins across to the practitioner's own display name
+	(direct-sourced Lab Test rows have no practitioner at all - see
+	_normalize_direct_row). Bulk-resolve it here and stamp a
+	`practitioner_name` key onto each row, same shape/relationship
+	front_desk.py's _resolve_patient_full_names() has to `patient`/
+	`patient_name` (and rehab_portal.py's own copy of this same helper).
+	Mutates rows in place; falls back to leaving practitioner_name unset
+	(the front-end falls back to the raw ID) if a practitioner was deleted
+	or renamed out from under a stale row.
+	"""
+	practitioner_ids = list({row["practitioner"] for row in rows if row.get("practitioner")})
+	if not practitioner_ids:
+		return
+
+	practitioners = frappe.get_all(
+		"Healthcare Practitioner",
+		filters={"name": ["in", practitioner_ids]},
+		fields=["name", "practitioner_name"],
+	)
+	name_map = {p["name"]: p["practitioner_name"] for p in practitioners}
+
+	for row in rows:
+		if row.get("practitioner") in name_map:
+			row["practitioner_name"] = name_map[row["practitioner"]]
+
+
 @frappe.whitelist()
 def get_lab_test_templates():
 	"""Active Lab Test Templates for the 'New Lab Request' picker."""
@@ -282,6 +311,7 @@ def get_requested_labs(search_patient=None, search_encounter=None, search_date=N
 
 	if search_encounter:
 		# Direct requests have no encounter to match.
+		_resolve_practitioner_names(encounter_rows)
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(search_patient, search_encounter, search_date)
@@ -318,7 +348,9 @@ def get_requested_labs(search_patient=None, search_encounter=None, search_date=N
 		as_dict=True,
 	)
 
-	return encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+	rows = encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+	_resolve_practitioner_names(rows)
+	return rows
 
 
 @frappe.whitelist()
@@ -365,6 +397,7 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 		row["payment_status"] = "Paid" if row.pop("invoice_status", None) == "Paid" else "Unpaid"
 
 	if search_encounter:
+		_resolve_practitioner_names(encounter_rows)
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(search_patient, search_encounter, search_date)
@@ -426,7 +459,9 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 			row["payment_status"] = "Paid" if r.get("invoice_status") == "Paid" else "Unpaid"
 		normalized_direct.append(row)
 
-	return encounter_rows + normalized_direct
+	rows = encounter_rows + normalized_direct
+	_resolve_practitioner_names(rows)
+	return rows
 
 
 @frappe.whitelist()
@@ -469,6 +504,7 @@ def get_completed_labs(search_patient=None, search_encounter=None, filter_date=N
 	)
 
 	if search_encounter:
+		_resolve_practitioner_names(encounter_rows)
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(
@@ -496,7 +532,9 @@ def get_completed_labs(search_patient=None, search_encounter=None, filter_date=N
 		as_dict=True,
 	)
 
-	return encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+	rows = encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
+	_resolve_practitioner_names(rows)
+	return rows
 
 
 @frappe.whitelist()

@@ -1221,7 +1221,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                             <div class="info-row">
                                 <i class="fa fa-user-md"></i>
                                 <span class="info-label">Practitioner:</span>
-                                <span class="info-value">${lab.practitioner}</span>
+                                <span class="info-value">${lab.practitioner_name || lab.practitioner}</span>
                             </div>
                             ` : ''}
                             ${lab.diagnosis ? `
@@ -1288,7 +1288,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                     <td><strong>${lab.lab_test_name || lab.lab_test_code}</strong><br><small>${lab.lab_test_code}</small></td>
                     <td>${lab.patient_name}<br><small>${lab.patient}</small></td>
                     <td>${frappe.datetime.str_to_user(lab.encounter_date)}</td>
-                    <td>${lab.practitioner || '-'}</td>
+                    <td>${lab.practitioner_name || lab.practitioner || '-'}</td>
                     <td>${lab.diagnosis || '-'}</td>
                     <td>${lab.priority ? `<span class="priority-badge ${priorityClass}">${lab.priority}</span>` : '-'}</td>
                     <td>
@@ -1395,7 +1395,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                             <div class="info-row">
                                 <i class="fa fa-user-md"></i>
                                 <span class="info-label">Practitioner:</span>
-                                <span class="info-value">${lab.practitioner}</span>
+                                <span class="info-value">${lab.practitioner_name || lab.practitioner}</span>
                             </div>
                             ` : ''}
                             ${lab.diagnosis ? `
@@ -1580,7 +1580,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                             <div class="info-row">
                                 <i class="fa fa-user-md"></i>
                                 <span class="info-label">Practitioner:</span>
-                                <span class="info-value">${lab.practitioner}</span>
+                                <span class="info-value">${lab.practitioner_name || lab.practitioner}</span>
                             </div>
                             ` : ''}
                             ${lab.diagnosis ? `
@@ -1648,7 +1648,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                     <td><strong>${lab.lab_test_name || lab.lab_test_code}</strong><br><small>${lab.lab_test_code}</small></td>
                     <td>${lab.patient_name}<br><small>${lab.patient}</small></td>
                     <td>${frappe.datetime.str_to_user(lab.encounter_date)}</td>
-                    <td>${lab.practitioner || '-'}</td>
+                    <td>${lab.practitioner_name || lab.practitioner || '-'}</td>
                     <td>${lab.diagnosis || '-'}</td>
                     <td>
                         <div class="lab-list-actions">
