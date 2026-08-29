@@ -818,6 +818,44 @@ def schedule_therapy_session(therapy_plan, therapy_type, start_date, start_time,
 
 
 @frappe.whitelist()
+def schedule_multiple_therapy_sessions(sessions):
+	"""Bulk version of schedule_therapy_session() - lets the "New Therapy
+	Request" dialog set up every session slot a request needs (one per
+	therapy type per no_of_sessions) in a single call, instead of a round
+	trip per session.
+
+	sessions: JSON string / list of entries shaped like
+	  schedule_therapy_session()'s own arguments:
+	  {"therapy_plan", "therapy_type", "start_date", "start_time",
+	   "practitioner" (optional), "location" (optional)}.
+
+	Each entry is scheduled via schedule_therapy_session() itself, so the
+	same paid-plan check and Therapy Session validate_duplicate() slot-
+	conflict guard apply per row. All rows are inserted within this one
+	request, so if any entry fails, Frappe rolls back the whole request -
+	this never leaves a request with only some of its sessions scheduled.
+	"""
+	if isinstance(sessions, str):
+		sessions = json.loads(sessions)
+	if not sessions:
+		frappe.throw(_("No sessions to schedule"))
+
+	created = []
+	for entry in sessions:
+		result = schedule_therapy_session(
+			therapy_plan=entry.get("therapy_plan"),
+			therapy_type=entry.get("therapy_type"),
+			start_date=entry.get("start_date"),
+			start_time=entry.get("start_time"),
+			practitioner=entry.get("practitioner"),
+			location=entry.get("location"),
+		)
+		created.append(result["name"])
+
+	return {"status": "Success", "names": created}
+
+
+@frappe.whitelist()
 def get_scheduled_sessions(from_date=None, to_date=None, date=None, practitioner=None):
 	"""Therapy Sessions in a date range, for the Schedule tab's list and
 	calendar views - mirrors spa_portal.py's get_spa_bookings() calling

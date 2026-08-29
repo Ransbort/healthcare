@@ -70,26 +70,28 @@ def _require_nurse_access():
 # =============================================
 
 
-def _nurse_queue_appointments(date):
+def _nurse_queue_appointments(date, to_date=None):
 	"""Every appointment that belongs on the Nurse Station's own list for
-	`date` right now: checked in that day, not yet dismissed (see
-	clear_nurse_queue()), and either still waiting on vitals or already
-	has a submitted Vital Signs record - regardless of how far the
-	appointment has since moved on its own (With Doctor, In
-	Consultation, even Completed). A doctor progressing their own queue
-	never removes a row from here - only clear_nurse_queue() does, via
-	custom_nurse_queue_dismissed.
+	`date` (or the `date`-`to_date` range, when given) right now: checked
+	in that day, not yet dismissed (see clear_nurse_queue()), and either
+	still waiting on vitals or already has a submitted Vital Signs record
+	- regardless of how far the appointment has since moved on its own
+	(With Doctor, In Consultation, even Completed). A doctor progressing
+	their own queue never removes a row from here - only
+	clear_nurse_queue() does, via custom_nurse_queue_dismissed.
 
-	Shared by get_nurse_queue() (which decorates the result for display)
-	and clear_nurse_queue() (which only needs to know which appointments
-	to act on) - keeping both on the exact same definition of "what's on
+	Shared by get_nurse_queue() (which decorates the result for display,
+	and is the only caller that ever passes to_date) and
+	clear_nurse_queue() (which only needs to know which appointments to
+	act on for a single day - clearing a whole range at once isn't
+	exposed) - keeping both on the exact same definition of "what's on
 	the nurse's list" so Clear All can never miss or over-clear relative
 	to what's actually shown.
 	"""
 	candidates = frappe.get_all(
 		"Patient Appointment",
 		filters={
-			"appointment_date": date,
+			"appointment_date": ["between", [date, to_date]] if to_date else date,
 			"checked_in_at": ["is", "set"],
 			"custom_nurse_queue_dismissed": 0,
 		},
@@ -121,7 +123,7 @@ def _nurse_queue_appointments(date):
 
 
 @frappe.whitelist()
-def get_nurse_queue(date=None):
+def get_nurse_queue(date=None, to_date=None):
 	"""Nurse Station's own queue - deliberately broader than a plain
 	get_queue(queue_status="With Nurse") call, and deliberately NOT tied
 	to current queue_status at all beyond _nurse_queue_appointments()'s
@@ -135,7 +137,7 @@ def get_nurse_queue(date=None):
 	_require_nurse_access()
 	date = date or nowdate()
 
-	rows = _nurse_queue_appointments(date)
+	rows = _nurse_queue_appointments(date, to_date)
 
 	for row in rows:
 		row["medical_department"] = row.pop("department")

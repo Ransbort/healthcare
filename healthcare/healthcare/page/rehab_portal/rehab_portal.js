@@ -286,6 +286,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
 
             .completed-filters {
                 display: flex;
+                flex-wrap: wrap;
                 gap: 15px;
                 margin-bottom: 20px;
                 padding: 15px;
@@ -295,7 +296,15 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
             }
 
             .completed-filters .frappe-control {
-                flex: 1;
+                flex: 0 0 200px;
+            }
+
+            .completed-filters .form-group {
+                margin-bottom: 0;
+            }
+
+            .completed-filters .btn {
+                flex-shrink: 0;
             }
 
             .scrollable-content {
@@ -893,6 +902,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 <div id="sched-list-view">
                     <div class="completed-filters">
                         <div class="frappe-control" data-fieldname="sched_filter_date"></div>
+                        <div class="frappe-control" data-fieldname="sched_filter_to_date"></div>
                         <button class="btn btn-primary" id="sched-filter-btn">
                             <i class="fa fa-filter"></i> Filter
                         </button>
@@ -1026,12 +1036,27 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         df: {
             fieldtype: 'Date',
             fieldname: 'sched_filter_date',
-            label: 'Filter by Date',
+            label: 'From Date',
             default: frappe.datetime.get_today()
         },
         render_input: true
     });
     sched_filter_date.set_value(frappe.datetime.get_today());
+
+    // Optional - leaving this blank keeps the original single-day filter
+    // behavior (get_scheduled_sessions' `date` arg); filling it in switches
+    // to a `from_date`/`to_date` range query instead.
+    let sched_filter_to_date = frappe.ui.form.make_control({
+        parent: page.main.find('[data-fieldname="sched_filter_to_date"]'),
+        df: {
+            fieldtype: 'Date',
+            fieldname: 'sched_filter_to_date',
+            label: 'To Date (optional)',
+            placeholder: __('Leave blank to filter a single day')
+        },
+        render_input: true
+    });
+    sched_filter_to_date.refresh();
 
     function updateEncounterFilter(patient_id, date) {
         search_encounter_field.df.get_query = function() {
@@ -1166,6 +1191,13 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         });
 
         function buildDialog(types, templates) {
+            // Slots to schedule if "Schedule session(s) now" is checked -
+            // one {therapy_type, no_of_sessions} entry per therapy type in
+            // play. Kept in sync with the manual therapy_type/no_of_sessions
+            // fields or the selected template's rows by updateManualSlot()/
+            // renderTemplatePreview() below.
+            let currentSlots = [];
+
             const dialog = new frappe.ui.Dialog({
                 title: __('New Therapy Request'),
                 fields: [
@@ -1209,7 +1241,8 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                         options: types.map(t => ({
                             label: `${t.name} (${format_currency(t.rate)})`,
                             value: t.name
-                        }))
+                        })),
+                        onchange: function() { updateManualSlot(); renderScheduleRows(); }
                     },
                     {
                         fieldtype: 'Int',
@@ -1217,7 +1250,37 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                         label: 'No of Sessions',
                         default: 1,
                         depends_on: 'eval:!doc.therapy_plan_template',
-                        mandatory_depends_on: 'eval:!doc.therapy_plan_template'
+                        mandatory_depends_on: 'eval:!doc.therapy_plan_template',
+                        onchange: function() { updateManualSlot(); renderScheduleRows(); }
+                    },
+                    { fieldtype: 'Section Break', label: __('Scheduling') },
+                    {
+                        fieldtype: 'Check',
+                        fieldname: 'schedule_now',
+                        label: __('Schedule session(s) now'),
+                        description: __("Book the date/time slot(s) for this request's session(s) right away, instead of doing it later from the Schedule tab."),
+                        onchange: function() { renderScheduleRows(); }
+                    },
+                    {
+                        fieldtype: 'Select',
+                        fieldname: 'schedule_location',
+                        label: __('Location'),
+                        options: '\nCenter\nHome\nTele',
+                        depends_on: 'eval:doc.schedule_now'
+                    },
+                    {
+                        // No depends_on here deliberately: Frappe re-applies
+                        // an HTML field's static `options` into its wrapper
+                        // whenever the dialog re-evaluates depends_on for
+                        // other fields (e.g. right after schedule_now's own
+                        // onchange finishes), which was wiping out the rows
+                        // table the instant renderScheduleRows() wrote it.
+                        // Left permanently visible and purely JS-controlled
+                        // instead - it just renders as an empty, invisible
+                        // div when there's nothing to show.
+                        fieldtype: 'HTML',
+                        fieldname: 'schedule_rows_html',
+                        options: '<div id="therapy-schedule-rows"></div>'
                     }
                 ],
                 primary_action_label: __('Create Request'),
@@ -1226,6 +1289,37 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                         frappe.show_alert({ message: __('Please select a therapy type or a template'), indicator: 'orange' }, 5);
                         return;
                     }
+
+                    // Validate + collect the schedule rows *before* creating
+                    // anything, so a therapist who checked "Schedule now"
+                    // but left a row blank gets stopped up front rather than
+                    // ending up with a request created and only some of its
+                    // sessions scheduled.
+                    let scheduleSlots = [];
+                    if (values.schedule_now) {
+                        const rowTypes = dialog._scheduleRowTypes || [];
+                        if (!rowTypes.length) {
+                            frappe.show_alert({ message: __('Please select a therapy type or template before scheduling sessions'), indicator: 'orange' }, 6);
+                            return;
+                        }
+                        const dateInputs = dialog.$wrapper.find('.schedule-date-input');
+                        const timeInputs = dialog.$wrapper.find('.schedule-time-input');
+                        let incomplete = false;
+                        rowTypes.forEach(function(therapyType, idx) {
+                            const date = $(dateInputs[idx]).val();
+                            const time = $(timeInputs[idx]).val();
+                            if (!date || !time) {
+                                incomplete = true;
+                                return;
+                            }
+                            scheduleSlots.push({ therapy_type: therapyType, start_date: date, start_time: time + ':00' });
+                        });
+                        if (incomplete) {
+                            frappe.show_alert({ message: __('Please fill in a date and time for every session, or uncheck "Schedule session(s) now"'), indicator: 'orange' }, 8);
+                            return;
+                        }
+                    }
+
                     frappe.call({
                         method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.create_therapy_request',
                         args: {
@@ -1238,14 +1332,60 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                         freeze: true,
                         freeze_message: __('Creating therapy request...'),
                         callback: function(r) {
-                            if (r.message && r.message.status === 'Success') {
-                                frappe.show_alert({
-                                    message: __('Therapy request created.'),
-                                    indicator: 'green'
-                                }, 6);
+                            if (!r.message || r.message.status !== 'Success') return;
+
+                            const planName = r.message.therapy_plan_name;
+
+                            if (!scheduleSlots.length) {
+                                frappe.show_alert({ message: __('Therapy request created.'), indicator: 'green' }, 6);
                                 dialog.hide();
                                 loadTherapies();
+                                return;
                             }
+
+                            frappe.call({
+                                method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.schedule_multiple_therapy_sessions',
+                                args: {
+                                    sessions: JSON.stringify(scheduleSlots.map(function(slot) {
+                                        return {
+                                            therapy_plan: planName,
+                                            therapy_type: slot.therapy_type,
+                                            start_date: slot.start_date,
+                                            start_time: slot.start_time,
+                                            practitioner: values.practitioner,
+                                            location: values.schedule_location || null
+                                        };
+                                    }))
+                                },
+                                freeze: true,
+                                freeze_message: __('Scheduling session(s)...'),
+                                callback: function(r2) {
+                                    if (r2.message && r2.message.status === 'Success') {
+                                        frappe.show_alert({
+                                            message: __('Therapy request created and {0} session(s) scheduled.', [r2.message.names.length]),
+                                            indicator: 'green'
+                                        }, 8);
+                                    }
+                                    dialog.hide();
+                                    loadTherapies();
+                                    if (page.main.find('#schedule-tab').hasClass('active')) {
+                                        if (schedView === 'list') loadSchedList();
+                                        else renderSchedCalendar();
+                                    }
+                                },
+                                error: function(r2) {
+                                    // The request itself already exists at this point - only
+                                    // the scheduling step failed (e.g. a slot conflict), so
+                                    // say so explicitly rather than implying nothing happened.
+                                    frappe.show_alert({
+                                        message: __('Therapy request {0} was created, but scheduling failed: {1}. Use the Schedule tab to try again.',
+                                            [planName, r2.message || __('unknown error')]),
+                                        indicator: 'orange'
+                                    }, 12);
+                                    dialog.hide();
+                                    loadTherapies();
+                                }
+                            });
                         },
                         error: function(r) {
                             frappe.show_alert({
@@ -1257,11 +1397,23 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 }
             });
 
+            // Keeps currentSlots in sync with the manual therapy_type/
+            // no_of_sessions fields. No-op while a template is selected,
+            // since renderTemplatePreview() owns currentSlots in that case.
+            function updateManualSlot() {
+                if (dialog.get_value('therapy_plan_template')) return;
+                const type = dialog.get_value('therapy_type');
+                const sessions = parseInt(dialog.get_value('no_of_sessions'), 10) || 1;
+                currentSlots = type ? [{ therapy_type: type, no_of_sessions: sessions }] : [];
+            }
+
             function renderTemplatePreview() {
                 const templateName = dialog.get_value('therapy_plan_template');
                 const target = dialog.$wrapper.find('#therapy-template-preview');
                 if (!templateName) {
                     target.empty();
+                    updateManualSlot();
+                    renderScheduleRows();
                     return;
                 }
                 frappe.call({
@@ -1269,17 +1421,78 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                     args: { therapy_plan_template: templateName },
                     callback: function(r) {
                         const rows = r.message || [];
+                        currentSlots = rows.map(function(row) {
+                            return { therapy_type: row.therapy_type, no_of_sessions: row.no_of_sessions || 1 };
+                        });
                         let html = '<table class="table table-bordered" style="margin-top:6px;"><thead><tr><th>Therapy Type</th><th>Sessions</th><th>Rate</th></tr></thead><tbody>';
                         rows.forEach(function(row) {
                             html += `<tr><td>${row.therapy_type}</td><td>${row.no_of_sessions || 0}</td><td>${format_currency(row.rate)}</td></tr>`;
                         });
                         html += '</tbody></table>';
                         target.html(html);
+                        renderScheduleRows();
                     }
                 });
             }
 
+            function addDaysToToday(days) {
+                const d = new Date();
+                d.setDate(d.getDate() + days);
+                return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            }
+
+            // Renders one Date+Time row per session slot (one row per
+            // no_of_sessions, per therapy type) so a request with several
+            // sessions can have all of them scheduled in this same dialog.
+            // Plain HTML date/time inputs are used instead of frappe
+            // controls since the row count changes dynamically with
+            // no_of_sessions/the template selection.
+            function renderScheduleRows() {
+                // Deferred one tick: this can be called from a field's own
+                // onchange, and Frappe's dialog-wide depends_on refresh that
+                // follows in the same tick can re-render sibling fields -
+                // writing the table synchronously here was getting
+                // overwritten by that refresh before the user ever saw it.
+                setTimeout(function() {
+                    const wrapper = dialog.$wrapper.find('#therapy-schedule-rows');
+                    if (!wrapper.length) return;
+                    if (!dialog.get_value('schedule_now')) {
+                        wrapper.empty();
+                        dialog._scheduleRowTypes = [];
+                        return;
+                    }
+                    if (!currentSlots.length) {
+                        wrapper.html(`<div class="text-muted">${__('Select a therapy type or template first.')}</div>`);
+                        dialog._scheduleRowTypes = [];
+                        return;
+                    }
+
+                    let rowTypes = [];
+                    currentSlots.forEach(function(slot) {
+                        const count = parseInt(slot.no_of_sessions, 10) || 1;
+                        for (let i = 0; i < count; i++) rowTypes.push(slot.therapy_type);
+                    });
+                    dialog._scheduleRowTypes = rowTypes;
+
+                    let html = `<table class="table table-bordered" style="margin-top:6px;">
+                        <thead><tr><th>#</th><th>${__('Therapy Type')}</th><th>${__('Date')}</th><th>${__('Time')}</th></tr></thead><tbody>`;
+                    rowTypes.forEach(function(therapyType, idx) {
+                        html += `
+                            <tr>
+                                <td>${idx + 1}</td>
+                                <td>${therapyType}</td>
+                                <td><input type="date" class="form-control input-sm schedule-date-input" data-idx="${idx}" value="${addDaysToToday(idx)}"></td>
+                                <td><input type="time" class="form-control input-sm schedule-time-input" data-idx="${idx}"></td>
+                            </tr>
+                        `;
+                    });
+                    html += '</tbody></table>';
+                    wrapper.html(html);
+                }, 0);
+            }
+
             dialog.show();
+            updateManualSlot();
         }
     }
 
@@ -2301,9 +2514,19 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
     }
 
     function loadSchedList() {
+        const fromDate = sched_filter_date.get_value();
+        const toDate = sched_filter_to_date.get_value();
+
+        if (toDate && fromDate && toDate < fromDate) {
+            frappe.show_alert({ message: __('"To Date" cannot be before "From Date"'), indicator: 'orange' }, 6);
+            return;
+        }
+
+        const args = toDate ? { from_date: fromDate, to_date: toDate } : { date: fromDate };
+
         frappe.call({
             method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_scheduled_sessions',
-            args: { date: sched_filter_date.get_value() },
+            args: args,
             callback: function(r) {
                 renderSchedList(r.message || []);
             }
@@ -2317,7 +2540,7 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                 <div class="empty-state">
                     <i class="fa fa-calendar-o"></i>
                     <h4>${__('No Sessions')}</h4>
-                    <p>${__('No therapy sessions found for the selected date.')}</p>
+                    <p>${__('No therapy sessions found for the selected date(s).')}</p>
                 </div>
             `);
             return;

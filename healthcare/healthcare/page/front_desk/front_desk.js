@@ -103,7 +103,8 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 				display: flex; gap: 15px; margin-bottom: 20px; padding: 15px;
 				background: #f8f9fa; border-radius: 8px; align-items: end;
 			}
-			.filter-bar .frappe-control, .filter-bar .form-group { margin-bottom: 0; flex: 1; }
+			.filter-bar .frappe-control, .filter-bar .form-group { margin-bottom: 0; flex: 0 0 200px; }
+			.filter-bar .btn { flex-shrink: 0; }
 
 			.queue-table { width: 100%; border-collapse: collapse; }
 			.queue-table-container {
@@ -310,6 +311,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			<div class="tab-content" id="queue-tab">
 				<div class="filter-bar">
 					<div data-fieldname="q_date"></div>
+					<div data-fieldname="q_to_date"></div>
 					<button class="btn btn-primary" id="queue-filter-btn"><i class="fa fa-filter"></i> Filter</button>
 					<button class="btn btn-default" id="queue-refresh-btn"><i class="fa fa-refresh"></i> Refresh</button>
 					<button class="btn btn-success" id="bulk-send-nurse-btn" style="display:none;">
@@ -1254,11 +1256,20 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	// =============================================
 	let q_date = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="q_date"]'),
-		df: { fieldtype: 'Date', fieldname: 'q_date', label: 'Date', default: frappe.datetime.get_today() },
+		df: { fieldtype: 'Date', fieldname: 'q_date', label: 'From Date', default: frappe.datetime.get_today() },
 		render_input: true
 	});
 	q_date.refresh();
 	q_date.set_value(frappe.datetime.get_today());
+
+	// Optional - leaving this blank keeps the single-day filter behavior;
+	// filling it in switches get_queue() to an appointment_date range.
+	let q_to_date = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="q_to_date"]'),
+		df: { fieldtype: 'Date', fieldname: 'q_to_date', label: 'To Date (optional)', placeholder: __('Leave blank to filter a single day') },
+		render_input: true
+	});
+	q_to_date.refresh();
 
 let currentQueueRows = [];
 
@@ -1326,9 +1337,17 @@ let currentQueueRows = [];
 	}
 
 function loadQueue() {
+		const fromDate = q_date.get_value();
+		const toDate = q_to_date.get_value();
+
+		if (toDate && fromDate && toDate < fromDate) {
+			frappe.show_alert({ message: __('"To Date" cannot be before "From Date"'), indicator: 'orange' }, 6);
+			return;
+		}
+
 		frappe.call({
 			method: 'healthcare.healthcare.page.front_desk.front_desk.get_queue',
-			args: { date: q_date.get_value() },
+			args: { date: fromDate, to_date: toDate || null },
 			callback: function(r) {
 				currentQueueRows = r.message || [];
 				renderQueueTable(currentQueueRows);

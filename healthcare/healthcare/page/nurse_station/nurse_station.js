@@ -168,7 +168,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			#nurse-refresh-date-btn, #admitted-search-btn {
 				border-radius: 8px;
 				font-weight: 600;
-				padding: 8px 18px;
+				
 			}
 
 			#admitted-clear-btn {
@@ -332,11 +332,12 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			<div class="tab-content active" id="vitals-tab">
 				<div class="search-section">
 					<div class="search-input-group">
-						<div data-fieldname="n_date"></div>
-						<button class="btn btn-primary" id="nurse-refresh-date-btn">
+						<div data-fieldname="n_date" style="flex: 0 0 200px;"></div>
+						<div data-fieldname="n_to_date" style="flex: 0 0 200px;"></div>
+						<button class="btn btn-primary" id="nurse-refresh-date-btn" style="flex-shrink: 0;">
 							<i class="fa fa-filter"></i> ${__('Filter')}
 						</button>
-						<button class="btn btn-clear-queue" id="nurse-clear-all-btn">
+						<button class="btn btn-clear-queue" id="nurse-clear-all-btn" style="flex-shrink: 0;">
 							<i class="fa fa-trash"></i> ${__('Clear All')}
 						</button>
 					</div>
@@ -450,11 +451,22 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 	// =============================================
 	let n_date = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="n_date"]'),
-		df: { fieldtype: 'Date', fieldname: 'n_date', label: 'Date', default: frappe.datetime.get_today() },
+		df: { fieldtype: 'Date', fieldname: 'n_date', label: 'From Date', default: frappe.datetime.get_today() },
 		render_input: true
 	});
 	n_date.refresh();
 	n_date.set_value(frappe.datetime.get_today());
+
+	// Optional - leaving this blank keeps the single-day filter behavior;
+	// filling it in switches get_nurse_queue() to a date range. Clear All
+	// deliberately keeps using n_date alone (see clear_nurse_queue() call
+	// below) - clearing a whole range at once isn't offered here.
+	let n_to_date = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="n_to_date"]'),
+		df: { fieldtype: 'Date', fieldname: 'n_to_date', label: 'To Date (optional)', placeholder: __('Leave blank to filter a single day') },
+		render_input: true
+	});
+	n_to_date.refresh();
 
 	page.main.find('#nurse-refresh-date-btn').on('click', function() { loadNurseQueue(); });
 
@@ -481,6 +493,14 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 	});
 
 	function loadNurseQueue() {
+		const fromDate = n_date.get_value();
+		const toDate = n_to_date.get_value();
+
+		if (toDate && fromDate && toDate < fromDate) {
+			frappe.show_alert({ message: __('"To Date" cannot be before "From Date"'), indicator: 'orange' }, 6);
+			return;
+		}
+
 		frappe.call({
 			// Deliberately not a plain "With Nurse" filter - that would drop
 			// a patient off this list the instant vitals are saved, or the
@@ -489,7 +509,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			// visible (and editable) until the nurse explicitly clears it -
 			// see its docstring in nurse_station.py.
 			method: 'healthcare.healthcare.page.nurse_station.nurse_station.get_nurse_queue',
-			args: { date: n_date.get_value() },
+			args: { date: fromDate, to_date: toDate || null },
 			callback: function(r) {
 				renderNurseTable(r.message || []);
 				markLoadDone();

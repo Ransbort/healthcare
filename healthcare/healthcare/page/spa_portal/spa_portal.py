@@ -139,9 +139,11 @@ def create_spa_invoice(spa_services, customer=None, patient=None, posting_date=N
 
 
 @frappe.whitelist()
-def get_spa_invoices(date=None):
+def get_spa_invoices(date=None, to_date=None):
 	filters = {"custom_invoice_from": "Spa", "docstatus": 1}
-	if date:
+	if date and to_date:
+		filters["posting_date"] = ["between", [date, to_date]]
+	elif date:
 		filters["posting_date"] = date
 
 	invoices = frappe.get_all(

@@ -193,8 +193,9 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 				align-items: end;
 			}
 
-			.filter-bar .frappe-control { flex: 1; margin-bottom: 0; }
+			.filter-bar .frappe-control { flex: 0 0 200px; margin-bottom: 0; }
 			.filter-bar .form-group { margin-bottom: 0; }
+			.filter-bar .btn { flex-shrink: 0; }
 
 			/* Summary Stats */
 			.summary-stats {
@@ -510,6 +511,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 			<div class="tab-content" id="invoices-tab">
 				<div class="filter-bar">
 					<div data-fieldname="filter_date"></div>
+					<div data-fieldname="filter_to_date"></div>
 					<button class="btn btn-primary" id="filter-btn">
 						<i class="fa fa-filter"></i> Filter
 					</button>
@@ -551,6 +553,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 				<div id="bookings-list-view">
 					<div class="filter-bar">
 						<div data-fieldname="bk_filter_date"></div>
+						<div data-fieldname="bk_filter_to_date"></div>
 						<button class="btn btn-primary" id="bk-filter-btn">
 							<i class="fa fa-filter"></i> Filter
 						</button>
@@ -676,7 +679,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	let filter_date = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="filter_date"]'),
 		df: {
-			fieldtype: 'Date', fieldname: 'filter_date', label: 'Date',
+			fieldtype: 'Date', fieldname: 'filter_date', label: 'From Date',
 			default: frappe.datetime.get_today(),
 			onchange: function() {
 				if (page.main.find('#invoices-tab').hasClass('active')) loadInvoices();
@@ -686,6 +689,18 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	});
 	filter_date.refresh();
 	filter_date.set_value(frappe.datetime.get_today());
+
+	// Optional - leaving this blank keeps the single-day filter behavior;
+	// filling it in switches get_spa_invoices() to a posting_date range.
+	let filter_to_date = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="filter_to_date"]'),
+		df: {
+			fieldtype: 'Date', fieldname: 'filter_to_date', label: 'To Date (optional)',
+			placeholder: __('Leave blank to filter a single day')
+		},
+		render_input: true
+	});
+	filter_to_date.refresh();
 
 	// =============================================
 	// CONTROLS — Bookings Tab
@@ -760,7 +775,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	let bk_filter_date = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="bk_filter_date"]'),
 		df: {
-			fieldtype: 'Date', fieldname: 'bk_filter_date', label: 'Date',
+			fieldtype: 'Date', fieldname: 'bk_filter_date', label: 'From Date',
 			default: frappe.datetime.get_today(),
 			onchange: function() {
 				if (page.main.find('#bookings-list-view').is(':visible')) loadBookingsList();
@@ -770,6 +785,19 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	});
 	bk_filter_date.refresh();
 	bk_filter_date.set_value(frappe.datetime.get_today());
+
+	// Optional - leaving this blank keeps the single-day filter behavior;
+	// filling it in switches get_spa_bookings() to its existing
+	// from_date/to_date range mode (already used by the calendar view).
+	let bk_filter_to_date = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="bk_filter_to_date"]'),
+		df: {
+			fieldtype: 'Date', fieldname: 'bk_filter_to_date', label: 'To Date (optional)',
+			placeholder: __('Leave blank to filter a single day')
+		},
+		render_input: true
+	});
+	bk_filter_to_date.refresh();
 
 	// =============================================
 	// SERVICES TABLE LOGIC
@@ -966,9 +994,17 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	page.main.find('#filter-btn').on('click', function() { loadInvoices(); });
 
 	function loadInvoices() {
+		const fromDate = filter_date.get_value();
+		const toDate = filter_to_date.get_value();
+
+		if (toDate && fromDate && toDate < fromDate) {
+			frappe.show_alert({ message: __('"To Date" cannot be before "From Date"'), indicator: 'orange' }, 6);
+			return;
+		}
+
 		frappe.call({
 			method: 'healthcare.healthcare.page.spa_portal.spa_portal.get_spa_invoices',
-			args: { date: filter_date.get_value() },
+			args: { date: fromDate, to_date: toDate || null },
 			callback: function(r) {
 				const invoices = r.message || [];
 				renderSummary(invoices);
@@ -1106,9 +1142,21 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	page.main.find('#bk-filter-btn').on('click', function() { loadBookingsList(); });
 
 	function loadBookingsList() {
+		const fromDate = bk_filter_date.get_value();
+		const toDate = bk_filter_to_date.get_value();
+
+		if (toDate && fromDate && toDate < fromDate) {
+			frappe.show_alert({ message: __('"To Date" cannot be before "From Date"'), indicator: 'orange' }, 6);
+			return;
+		}
+
+		// get_spa_bookings() only honors from_date/to_date when `date` is
+		// left empty (see its own docstring) - so don't send both.
+		const args = toDate ? { from_date: fromDate, to_date: toDate } : { date: fromDate };
+
 		frappe.call({
 			method: 'healthcare.healthcare.page.spa_portal.spa_portal.get_spa_bookings',
-			args: { date: bk_filter_date.get_value() },
+			args: args,
 			callback: function(r) {
 				renderBookingsList(r.message || []);
 			}

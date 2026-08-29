@@ -109,15 +109,19 @@ def _stage_for_queue_status(queue_status):
 
 
 @frappe.whitelist()
-def get_doctor_queue(date=None):
-	"""Every appointment still moving through today's pipeline - not just
-	the ones already "With Doctor" - so a doctor can see how close the
-	next few patients actually are instead of the queue looking empty
-	until someone lands on their desk. "With Lab" rows don't carry lab
-	progress here (this app doesn't depend on sports_complex) -
-	doctor_station.js fetches that separately from sports_complex.
-	healthcare_integration.get_trial_lab_queue() and merges it in by
-	appointment name, same as this page's old Lab tab did.
+def get_doctor_queue(date=None, to_date=None):
+	"""Every appointment still moving through today's pipeline (or the
+	date-to_date range, when given) - not just the ones already "With
+	Doctor" - so a doctor can see how close the next few patients
+	actually are instead of the queue looking empty until someone lands
+	on their desk. "With Lab" rows don't carry lab progress here (this
+	app doesn't depend on sports_complex) - doctor_station.js fetches
+	that separately from sports_complex.healthcare_integration.
+	get_trial_lab_queue() and merges it in by appointment name, same as
+	this page's old Lab tab did. That merge call only understands a
+	single day, so doctor_station.js skips it entirely while a range is
+	active - "With Lab" rows just render without a test count then, the
+	same graceful fallback already used when that endpoint is unreachable.
 	"""
 	_require_doctor_access()
 	date = date or nowdate()
@@ -125,7 +129,7 @@ def get_doctor_queue(date=None):
 	rows = frappe.get_all(
 		"Patient Appointment",
 		filters={
-			"appointment_date": date,
+			"appointment_date": ["between", [date, to_date]] if to_date else date,
 			"checked_in_at": ["is", "set"],
 			"queue_status": ["!=", "Completed"],
 		},

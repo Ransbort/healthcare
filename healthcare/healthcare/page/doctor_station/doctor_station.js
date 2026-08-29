@@ -332,8 +332,9 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 			<div class="tab-content active" id="queue-tab">
 				<div class="search-section">
 					<div class="search-input-group">
-						<div data-fieldname="doc_date"></div>
-						<button class="btn btn-primary" id="doctor-refresh-date-btn">
+						<div data-fieldname="doc_date" style="flex: 0 0 200px;"></div>
+						<div data-fieldname="doc_to_date" style="flex: 0 0 200px;"></div>
+						<button class="btn btn-primary" id="doctor-refresh-date-btn" style="flex-shrink: 0;">
 							<i class="fa fa-filter"></i> ${__('Filter')}
 						</button>
 					</div>
@@ -441,23 +442,48 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 	// =============================================
 	let doc_date = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="doc_date"]'),
-		df: { fieldtype: 'Date', fieldname: 'doc_date', label: 'Date', default: frappe.datetime.get_today() },
+		df: { fieldtype: 'Date', fieldname: 'doc_date', label: 'From Date', default: frappe.datetime.get_today() },
 		render_input: true
 	});
 	doc_date.refresh();
 	doc_date.set_value(frappe.datetime.get_today());
 
+	// Optional - leaving this blank keeps the single-day filter behavior;
+	// filling it in switches get_doctor_queue() to a date range. The
+	// sports_complex lab-progress merge below only understands a single
+	// day, so it's skipped entirely while a range is active - see the
+	// comment at that call site.
+	let doc_to_date = frappe.ui.form.make_control({
+		parent: page.main.find('[data-fieldname="doc_to_date"]'),
+		df: { fieldtype: 'Date', fieldname: 'doc_to_date', label: 'To Date (optional)', placeholder: __('Leave blank to filter a single day') },
+		render_input: true
+	});
+	doc_to_date.refresh();
+
 	page.main.find('#doctor-refresh-date-btn').on('click', function() { loadDoctorQueue(); });
 
 	function loadDoctorQueue() {
+		const fromDate = doc_date.get_value();
+		const toDate = doc_to_date.get_value();
+
+		if (toDate && fromDate && toDate < fromDate) {
+			frappe.show_alert({ message: __('"To Date" cannot be before "From Date"'), indicator: 'orange' }, 6);
+			return;
+		}
+
 		frappe.call({
 			method: 'healthcare.healthcare.page.doctor_station.doctor_station.get_doctor_queue',
-			args: { date: doc_date.get_value() },
+			args: { date: fromDate, to_date: toDate || null },
 			callback: function(r) {
 				const rows = r.message || [];
 				const hasLabRows = rows.some(function(row) { return row.queue_status === 'With Lab'; });
 
-				if (!hasLabRows) {
+				// get_trial_lab_queue() (below) only takes a single `date`,
+				// so a date-range query skips the lab-progress merge
+				// entirely - "With Lab" rows just render without a test
+				// count, same graceful fallback already used when that
+				// endpoint errors out.
+				if (!hasLabRows || toDate) {
 					renderDoctorQueue(rows);
 					markLoadDone();
 					return;
@@ -474,7 +500,7 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 				// count.
 				frappe.call({
 					method: 'sports_complex.sports_complex.healthcare_integration.get_trial_lab_queue',
-					args: { date: doc_date.get_value() },
+					args: { date: fromDate },
 					callback: function(labResult) {
 						mergeLabProgress(rows, labResult.message || []);
 						renderDoctorQueue(rows);

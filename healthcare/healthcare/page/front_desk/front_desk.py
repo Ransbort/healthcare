@@ -1170,7 +1170,7 @@ def _send_registration_email(patient_doc):
 # =============================================
 
 @frappe.whitelist()
-def get_queue(date=None, queue_status=None):
+def get_queue(date=None, queue_status=None, to_date=None):
 
 	# queue_status used to pick which Front Desk tab this call was gated
 	# against ("With Nurse" -> nurse, "With Lab" -> lab, "With Doctor" ->
@@ -1187,7 +1187,7 @@ def get_queue(date=None, queue_status=None):
 	date = date or nowdate()
 
 	filters = {
-		"appointment_date": date,
+		"appointment_date": ["between", [date, to_date]] if to_date else date,
 		# See get_pending_checkins() above for why this isn't
 		# ["not in", ["", None]] - that form silently matches zero rows
 		# ever, due to SQL's NULL three-valued-logic trap.
