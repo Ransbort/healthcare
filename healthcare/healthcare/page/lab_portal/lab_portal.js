@@ -719,6 +719,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             <div class="tab-content" id="completed-tab">
                 <div class="completed-filters">
                     <div class="frappe-control" data-fieldname="completed_date"></div>
+                    <div class="frappe-control" data-fieldname="completed_to_date"></div>
                     <button class="btn btn-primary" id="filter-completed-btn">
                         <i class="fa fa-filter"></i> Filter
                     </button>
@@ -743,6 +744,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             <div class="tab-content" id="trial-tab">
                 <div class="completed-filters">
                     <div class="frappe-control" data-fieldname="trial_date"></div>
+                    <div class="frappe-control" data-fieldname="trial_to_date"></div>
                     <button class="btn btn-primary" id="filter-trial-btn">
                         <i class="fa fa-filter"></i> Filter
                     </button>
@@ -850,7 +852,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         df: {
             fieldtype: 'Date',
             fieldname: 'completed_date',
-            label: 'Filter by Date',
+            label: 'From Date',
             default: frappe.datetime.get_today()
         },
         render_input: true
@@ -858,18 +860,44 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
 
     completed_date_field.set_value(frappe.datetime.get_today());
 
+    let completed_to_date_field = frappe.ui.form.make_control({
+        parent: page.main.find('[data-fieldname="completed_to_date"]'),
+        df: {
+            fieldtype: 'Date',
+            fieldname: 'completed_to_date',
+            label: 'To Date (optional)',
+            placeholder: __('Leave blank to filter a single day')
+        },
+        render_input: true
+    });
+
+    completed_to_date_field.refresh();
+
     let trial_date_field = frappe.ui.form.make_control({
         parent: page.main.find('[data-fieldname="trial_date"]'),
         df: {
             fieldtype: 'Date',
             fieldname: 'trial_date',
-            label: 'Date',
+            label: 'From Date',
             default: frappe.datetime.get_today()
         },
         render_input: true
     });
 
     trial_date_field.set_value(frappe.datetime.get_today());
+
+    let trial_to_date_field = frappe.ui.form.make_control({
+        parent: page.main.find('[data-fieldname="trial_to_date"]'),
+        df: {
+            fieldtype: 'Date',
+            fieldname: 'trial_to_date',
+            label: 'To Date (optional)',
+            placeholder: __('Leave blank to filter a single day')
+        },
+        render_input: true
+    });
+
+    trial_to_date_field.refresh();
 
     function updateEncounterFilter(patient_id, date) {
         search_encounter_field.df.get_query = function() {
@@ -938,15 +966,32 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
     });
 
     page.main.find('#filter-completed-btn').on('click', function() {
+        const fromDate = completed_date_field.get_value();
+        const toDate = completed_to_date_field.get_value();
+
+        if (toDate && fromDate && toDate < fromDate) {
+            frappe.show_alert({ message: __('"To Date" cannot be before "From Date"'), indicator: 'orange' }, 6);
+            return;
+        }
+
         loadCompletedLabs(
             search_patient_field.get_value(),
             search_encounter_field.get_value(),
-            completed_date_field.get_value()
+            fromDate,
+            toDate
         );
     });
 
     page.main.find('#filter-trial-btn').on('click', function() {
-        loadTrialLabs(trial_date_field.get_value());
+        const fromDate = trial_date_field.get_value();
+        const toDate = trial_to_date_field.get_value();
+
+        if (toDate && fromDate && toDate < fromDate) {
+            frappe.show_alert({ message: __('"To Date" cannot be before "From Date"'), indicator: 'orange' }, 6);
+            return;
+        }
+
+        loadTrialLabs(fromDate, toDate);
     });
 
     page.main.find('#new-lab-request-btn').on('click', function() {
@@ -1054,8 +1099,8 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         pendingLoads = 4;
         loadRequestedLabs(patient, encounter, date);
         loadPendingLabs(patient, encounter, date);
-        loadCompletedLabs(patient, encounter, completed_date_field.get_value());
-        loadTrialLabs(trial_date_field.get_value());
+        loadCompletedLabs(patient, encounter, completed_date_field.get_value(), completed_to_date_field.get_value());
+        loadTrialLabs(trial_date_field.get_value(), trial_to_date_field.get_value());
     }
 
     function loadRequestedLabs(patient, encounter, date) {
@@ -1094,13 +1139,14 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         });
     }
 
-    function loadCompletedLabs(patient, encounter, date) {
+    function loadCompletedLabs(patient, encounter, date, to_date) {
         frappe.call({
             method: 'healthcare.healthcare.page.lab_portal.lab_portal.get_completed_labs',
             args: {
                 search_patient: patient || null,
                 search_encounter: encounter || null,
-                filter_date: date || null
+                filter_date: date || null,
+                to_date: to_date || null
             },
             callback: function(r) {
                 const labs = r.message || [];
@@ -1753,10 +1799,13 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
     // ---------------------------------------------------------------
     // TRIAL LABS (moved over from Doctor Station's old Lab tab)
     // ---------------------------------------------------------------
-    function loadTrialLabs(date) {
+    function loadTrialLabs(date, to_date) {
         frappe.call({
             method: 'sports_complex.sports_complex.healthcare_integration.get_trial_lab_tests',
-            args: { date: date || trial_date_field.get_value() },
+            args: {
+                date: date || trial_date_field.get_value(),
+                to_date: to_date || trial_to_date_field.get_value() || null
+            },
             callback: function(r) {
                 const rows = r.message || [];
                 window.lastTrialLabs = rows;
@@ -1800,7 +1849,10 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
     }
 
     function trialLabCardMarkup(row) {
-        const dateStr = frappe.datetime.str_to_user(trial_date_field.get_value());
+        // Use this row's own appointment date, not the filter's From-Date -
+        // a multi-day range means different cards can legitimately fall on
+        // different days.
+        const dateStr = frappe.datetime.str_to_user(row.appointment_date);
         const encounterDateTime = row.encounter_time ? `${dateStr} ${row.encounter_time}` : dateStr;
         const isPaid = row.payment_status === 'Paid' || row.payment_status === 'Free';
         const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';
@@ -1912,7 +1964,9 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
         `;
 
         rows.forEach(function(row, index) {
-            const dateStr = frappe.datetime.str_to_user(trial_date_field.get_value());
+            // Same reasoning as trialLabCardMarkup() above - each row's own
+            // date, not the filter's From-Date.
+            const dateStr = frappe.datetime.str_to_user(row.appointment_date);
             const encounterDateTime = row.encounter_time ? `${dateStr} ${row.encounter_time}` : dateStr;
             const isPaid = row.payment_status === 'Paid' || row.payment_status === 'Free';
             const paymentBadgeClass = isPaid ? 'badge badge-success' : 'badge badge-warning';

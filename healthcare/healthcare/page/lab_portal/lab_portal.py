@@ -85,7 +85,9 @@ _DIAGNOSIS_SUBQUERY = """
 """
 
 
-def _lab_search_conditions(search_patient, search_encounter, search_date, date_field="pe.encounter_date"):
+def _lab_search_conditions(
+	search_patient, search_encounter, search_date, search_to_date=None, date_field="pe.encounter_date"
+):
 	conditions = []
 	values = {}
 	if search_patient:
@@ -94,13 +96,19 @@ def _lab_search_conditions(search_patient, search_encounter, search_date, date_f
 	if search_encounter:
 		conditions.append("pe.name = %(search_encounter)s")
 		values["search_encounter"] = search_encounter
-	if search_date:
+	if search_date and search_to_date:
+		conditions.append(f"{date_field} BETWEEN %(search_date)s AND %(search_to_date)s")
+		values["search_date"] = search_date
+		values["search_to_date"] = search_to_date
+	elif search_date:
 		conditions.append(f"{date_field} = %(search_date)s")
 		values["search_date"] = search_date
 	return conditions, values
 
 
-def _direct_search_conditions(search_patient, search_encounter, search_date, date_field="lt.creation"):
+def _direct_search_conditions(
+	search_patient, search_encounter, search_date, search_to_date=None, date_field="lt.creation"
+):
 	"""Same shape as _lab_search_conditions but against Lab Test directly.
 	search_encounter is ignored - direct requests have no encounter.
 	"""
@@ -109,7 +117,11 @@ def _direct_search_conditions(search_patient, search_encounter, search_date, dat
 	if search_patient:
 		conditions.append("(lt.patient LIKE %(search_patient)s OR lt.patient_name LIKE %(search_patient)s)")
 		values["search_patient"] = f"%{search_patient}%"
-	if search_date:
+	if search_date and search_to_date:
+		conditions.append(f"DATE({date_field}) BETWEEN %(search_date)s AND %(search_to_date)s")
+		values["search_date"] = search_date
+		values["search_to_date"] = search_to_date
+	elif search_date:
 		conditions.append(f"DATE({date_field}) = %(search_date)s")
 		values["search_date"] = search_date
 	return conditions, values
@@ -465,11 +477,14 @@ def get_pending_labs(search_patient=None, search_encounter=None, search_date=Non
 
 
 @frappe.whitelist()
-def get_completed_labs(search_patient=None, search_encounter=None, filter_date=None):
+def get_completed_labs(search_patient=None, search_encounter=None, filter_date=None, to_date=None):
 	"""Lab tests with results entered (status Completed) - merges
-	encounter-sourced and direct-sourced requests."""
+	encounter-sourced and direct-sourced requests. `to_date` is optional -
+	leaving it blank keeps the single-day filter behavior; filling it in
+	switches to a `filter_date`-to-`to_date` range (see _lab_search_
+	conditions/_direct_search_conditions)."""
 	conditions, values = _lab_search_conditions(
-		search_patient, search_encounter, filter_date, date_field="DATE(lt.modified)"
+		search_patient, search_encounter, filter_date, to_date, date_field="DATE(lt.modified)"
 	)
 	conditions[0:0] = [
 		"lp.invoiced = 1",
@@ -508,7 +523,7 @@ def get_completed_labs(search_patient=None, search_encounter=None, filter_date=N
 		return encounter_rows
 
 	d_conditions, d_values = _direct_search_conditions(
-		search_patient, search_encounter, filter_date, date_field="lt.modified"
+		search_patient, search_encounter, filter_date, to_date, date_field="lt.modified"
 	)
 	d_conditions[0:0] = ["lt.prescription IS NULL", "lt.status = 'Completed'"]
 	d_where = " AND ".join(d_conditions)
