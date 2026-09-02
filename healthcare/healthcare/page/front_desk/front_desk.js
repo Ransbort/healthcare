@@ -82,15 +82,37 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 			.tab-content { display: none; flex: 1; min-height: 0; overflow: hidden; }
 			.tab-content.active { display: flex; flex-direction: column; }
 
-			/* Each tab supplies its own scroll region (a fixed filter bar
-			   above it, or - for Check-In - the whole tab's content) so the
-			   .fd-wrapper itself never scrolls at the page level - see its
-			   own comment. */
+			/* Queue supplies its own scroll region (a fixed filter bar above
+			   a scrolling table), so .fd-wrapper stays capped at the
+			   viewport and never scrolls at the page level for that tab. */
 			.scrollable-content {
 				flex: 1;
 				min-height: 0;
 				overflow-y: auto;
 				padding-right: 4px;
+			}
+
+			/* Check-In is the opposite of Queue: its form can run longer
+			   than one screen, and boxing it into that same fixed-height,
+			   internally-scrolling region (as this used to do for every
+			   tab, this one included) clipped the Check In & Bill button
+			   off the bottom behind its own small inner scrollbar instead
+			   of the page just scrolling normally. .mode-checkin relaxes
+			   .fd-wrapper back to ordinary page scroll for this tab only -
+			   toggled alongside the tab-btn click handler below, and
+			   present in the tab's initial markup since Check-In starts
+			   active on load. */
+			.fd-wrapper.mode-checkin {
+				height: auto;
+				min-height: calc(100vh - 60px);
+				overflow: visible;
+			}
+			.fd-wrapper.mode-checkin .tab-content.active {
+				overflow: visible;
+			}
+			.fd-wrapper.mode-checkin .scrollable-content {
+				overflow-y: visible;
+				flex: none;
 			}
 
 			.fd-section {
@@ -240,7 +262,7 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 	$(style).appendTo(page.main);
 
 	let html = `
-		<div class="fd-wrapper">
+		<div class="fd-wrapper mode-checkin">
 			<div class="tabs-section">
 				<button class="tab-btn active" data-tab="checkin"><i class="fa fa-user-plus"></i> Check-In</button>
 				<button class="tab-btn" data-tab="queue"><i class="fa fa-list"></i> Queue</button>
@@ -1276,6 +1298,10 @@ frappe.pages['front-desk'].on_page_load = function(wrapper) {
 		$(this).addClass('active');
 		page.main.find('.tab-content').removeClass('active');
 		page.main.find(`#${tab}-tab`).addClass('active');
+		// See .mode-checkin's comment above .scrollable-content - Check-In
+		// scrolls with the page, Queue keeps its own fixed-height internal
+		// scroll region.
+		page.main.find('.fd-wrapper').toggleClass('mode-checkin', tab === 'checkin');
 		if (tab === 'queue') withServerToday(function(t) { q_date.set_value(t); loadQueue(); });
 	});
 

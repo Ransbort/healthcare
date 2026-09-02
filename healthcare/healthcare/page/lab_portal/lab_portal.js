@@ -1274,6 +1274,13 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                                 <span class="info-value">${lab.practitioner_name || lab.practitioner}</span>
                             </div>
                             ` : ''}
+                            ${lab.encounter_id ? `
+                            <div class="info-row">
+                                <i class="fa fa-file-text-o"></i>
+                                <span class="info-label">Encounter:</span>
+                                <span class="info-value">${lab.encounter_id}</span>
+                            </div>
+                            ` : ''}
                             ${lab.diagnosis ? `
                             <div class="info-row diagnosis-row">
                                 <i class="fa fa-stethoscope"></i>
@@ -1446,6 +1453,13 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                                 <i class="fa fa-user-md"></i>
                                 <span class="info-label">Practitioner:</span>
                                 <span class="info-value">${lab.practitioner_name || lab.practitioner}</span>
+                            </div>
+                            ` : ''}
+                            ${lab.encounter_id ? `
+                            <div class="info-row">
+                                <i class="fa fa-file-text-o"></i>
+                                <span class="info-label">Encounter:</span>
+                                <span class="info-value">${lab.encounter_id}</span>
                             </div>
                             ` : ''}
                             ${lab.diagnosis ? `
@@ -1631,6 +1645,13 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                                 <i class="fa fa-user-md"></i>
                                 <span class="info-label">Practitioner:</span>
                                 <span class="info-value">${lab.practitioner_name || lab.practitioner}</span>
+                            </div>
+                            ` : ''}
+                            ${lab.encounter_id ? `
+                            <div class="info-row">
+                                <i class="fa fa-file-text-o"></i>
+                                <span class="info-label">Encounter:</span>
+                                <span class="info-value">${lab.encounter_id}</span>
                             </div>
                             ` : ''}
                             ${lab.diagnosis ? `

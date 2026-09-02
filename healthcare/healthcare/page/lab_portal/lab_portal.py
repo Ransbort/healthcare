@@ -568,21 +568,40 @@ def accept_lab_request(prescription_id, patient_id, encounter_id, lab_test_code)
 		frappe.throw(_("Lab Prescription row {0} not found on encounter {1}").format(prescription_id, encounter_id))
 
 	patient = frappe.get_doc("Patient", patient_id)
-	# Bill against the specific Lab Prescription row, not the encounter as
-	# a whole - healthcare/utils.py's set_invoiced()/validate_invoiced_on_submit()
-	# stamp the "invoiced" flag onto whatever (reference_dt, reference_dn)
-	# the invoice item points at. Using "Patient Encounter" here used to
-	# flip the *encounter's own* invoiced flag (meant for its OP consulting
-	# charge, unrelated to labs) on submit of the FIRST lab test's invoice,
-	# which then made every other lab test requested off the same encounter
-	# fail with "already invoiced" even though only one test had actually
-	# been billed. Lab Prescription rows are per-line and already have
-	# their own core "invoiced" field, matching how accept_direct_lab_request()
-	# below bills against the specific Lab Test instead of anything shared.
-	invoice = _create_lab_invoice(
-		patient, lab_test_code, reference_dt="Lab Prescription", reference_dn=prescription_row.name
-	)
 
+	# Create the Lab Test BEFORE the invoice, and bill against the Lab Test
+	# itself (reference_dt="Lab Test") rather than the Lab Prescription row
+	# or the encounter as a whole. Two things this avoids:
+	#
+	# 1. (The original reason "Patient Encounter" was ruled out.) healthcare/
+	#    utils.py's set_invoiced()/validate_invoiced_on_submit() stamp the
+	#    "invoiced" flag onto whatever (reference_dt, reference_dn) the
+	#    invoice item points at. Using "Patient Encounter" flipped the
+	#    *encounter's own* invoiced flag (meant for its OP consulting charge,
+	#    unrelated to labs) on submit of the FIRST lab test's invoice, which
+	#    then made every other lab test requested off the same encounter
+	#    fail with "already invoiced" even though only one test had actually
+	#    been billed.
+	#
+	# 2. (Why "Lab Prescription" turned out to be wrong too.) Core Healthcare's
+	#    own Sales Invoice on_submit hook (manage_invoice_submit_cancel() ->
+	#    create_multiple(), gated on Healthcare Settings' "Create Lab Test on
+	#    Sales Invoice Submit") independently scans the invoice's own items
+	#    for anything whose Item Code matches a Lab Test Template, and - in
+	#    healthcare/healthcare/doctype/lab_test/lab_test.py's
+	#    create_lab_test_from_invoice() - only skips creating its OWN Lab
+	#    Test when it finds item.reference_dt == "Lab Test" already.
+	#    "Lab Prescription" doesn't match that check, so every accepted
+	#    request silently got a SECOND, untracked Lab Test made for it (with
+	#    invoiced=1 and no custom_invoice, since core doesn't know about this
+	#    app's own field) the moment the invoice was submitted - which Lab
+	#    Portal then showed as a "Free" duplicate card as soon as the request
+	#    moved from Requested into Pending Labs. accept_direct_lab_request()
+	#    below already uses "Lab Test" for exactly this reason, and never
+	#    produced this duplicate - matching it here closes the gap for
+	#    encounter-sourced (doctor-ordered) requests too. (If the "Create Lab
+	#    Test on Sales Invoice Submit" setting is off, this branch of core
+	#    never runs at all - but this fix holds regardless of that setting.)
 	lab_test = frappe.get_doc(
 		{
 			"doctype": "Lab Test",
@@ -591,11 +610,16 @@ def accept_lab_request(prescription_id, patient_id, encounter_id, lab_test_code)
 			"patient_sex": patient.sex,
 			"template": lab_test_code,
 			"prescription": prescription_row.name,
-			"custom_invoice": invoice.name,
 			"status": "Draft",
 		}
 	)
 	lab_test.insert(ignore_permissions=True)
+
+	invoice = _create_lab_invoice(
+		patient, lab_test_code, reference_dt="Lab Test", reference_dn=lab_test.name
+	)
+	lab_test.db_set("custom_invoice", invoice.name)
+
 	prescription_row.db_set("custom_lab_test", lab_test.name)
 	prescription_row.db_set("invoiced", 1)
 
