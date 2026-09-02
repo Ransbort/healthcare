@@ -144,9 +144,34 @@ def get_nurse_queue(date=None, to_date=None):
 		row["encounter_time"] = row.pop("appointment_time")
 
 	_attach_latest_vitals(rows)
+	_attach_linked_encounter(rows)
 	_resolve_patient_full_names(rows)
 
 	return rows
+
+
+def _attach_linked_encounter(rows):
+	"""Stamps row["encounter"] with the Patient Encounter linked to that
+	row's appointment, if one exists yet - None otherwise (appointment
+	still with the nurse, or the doctor hasn't started consultation, so
+	there's nothing for "View Encounter" to open). One doctor is only
+	ever expected to have started one encounter per appointment (the
+	same assumption doctor_station.py's own start_consultation() relies
+	on), so the first match per appointment is all that's needed here -
+	this is read-only display, not a place to second-guess that."""
+	if not rows:
+		return
+
+	appointment_ids = [row["name"] for row in rows]
+	encounters = frappe.get_all(
+		"Patient Encounter",
+		filters={"appointment": ["in", appointment_ids]},
+		fields=["name", "appointment"],
+	)
+	encounter_by_appointment = {e.appointment: e.name for e in encounters}
+
+	for row in rows:
+		row["encounter"] = encounter_by_appointment.get(row["name"])
 
 
 @frappe.whitelist()

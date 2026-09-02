@@ -610,6 +610,16 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			const actionBtn = waiting
 				? `<button class="btn btn-xs btn-primary btn-open-vitals" data-name="${row.name}" data-mode="record">${__('Record Vitals')}</button>`
 				: `<button class="btn btn-xs btn-default btn-open-vitals" data-name="${row.name}" data-mode="edit">${__('Edit Vitals')}</button>`;
+			// Only once the doctor has actually started consultation (see
+			// _attach_linked_encounter() in nurse_station.py) - nothing to
+			// view read-only before that. Kept as a separate button rather
+			// than folded into actionBtn above so a nurse can still open
+			// the encounter for context even while the vitals action is
+			// disabled/not relevant (e.g. queue_status already past With
+			// Nurse and Edit Vitals is what's showing instead).
+			const viewEncounterBtn = row.encounter
+				? `<button class="btn btn-xs btn-default btn-view-encounter" data-encounter="${row.encounter}">${__('View Encounter')}</button>`
+				: '';
 			body += `
 				<tr class="nurse-row" data-name="${row.name}">
 					<td>${formatQueueTime(row.encounter_time)}</td>
@@ -619,6 +629,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 					<td>${statusBadge(row.queue_status)}</td>
 					<td>
 						${actionBtn}
+						${viewEncounterBtn}
 					</td>
 				</tr>
 			`;
@@ -644,6 +655,11 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			const mode = $(this).data('mode');
 			const row = rows.find(r => r.name === name);
 			openVitalsDialog(row, mode);
+		});
+
+		container.find('.btn-view-encounter').on('click', function(e) {
+			e.stopPropagation();
+			openEncounterDialog($(this).data('encounter'));
 		});
 
 		function openVitalsDialog(row, mode) {
@@ -750,6 +766,71 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 
 			dialog.show();
 		}
+	}
+
+	// =============================================
+	// ENCOUNTER VIEW (read-only)
+	// =============================================
+	// Same iframe-embed technique as Doctor Station's own openEncounterDialog
+	// (doctor_station.js) - an <iframe> pointed at the exact same URL "Open
+	// Full Page" uses, same-origin, same route and code path Desk always
+	// renders a Form through, nothing reimplemented or guessed at. The
+	// difference here is deliberate: this is read-only, not "start
+	// consultation", and that's enforced where it actually matters - the
+	// server side, via Patient Encounter's own permission list (Nursing
+	// User now has read/print/export/share but no write/create/submit/
+	// delete - see patient_encounter.json) - rather than by hiding buttons
+	// in this dialog, which a nurse could just route around by opening the
+	// same link in a new tab anyway. Frappe's own Form renders read-only by
+	// itself for a user with no write permission, so nothing extra is done
+	// here to force that - same reasoning doctor_station.js's own comment
+	// trail already went through for the sidebar-hiding CSS below: prefer
+	// the guaranteed-correct primitive (real permissions) over reimplementing
+	// something Frappe already does natively.
+	function openEncounterDialog(encounterName) {
+		const dialog = new frappe.ui.Dialog({
+			title: __('Patient Encounter (Read Only)'),
+			size: 'extra-large',
+			secondary_action_label: __('Open in New Tab'),
+			secondary_action: function() {
+				window.open(frappe.utils.get_form_link('Patient Encounter', encounterName), '_blank');
+			}
+		});
+
+		dialog.$wrapper.find('.modal-footer').hide();
+		dialog.$wrapper.find('.modal-dialog').css('max-width', '95vw');
+		const $body = dialog.$wrapper.find('.modal-body');
+		$body.css({ padding: 0, height: '85vh', overflow: 'hidden' });
+		$body.html(
+			`<iframe src="${frappe.utils.get_form_link('Patient Encounter', encounterName)}" ` +
+			`style="width: 100%; height: 100%; border: 0;" title="${frappe.utils.escape_html(__('Patient Encounter'))}"></iframe>`
+		);
+
+		$body.find('iframe').on('load', function() {
+			try {
+				const idoc = this.contentDocument;
+				if (!idoc) return;
+				const style = idoc.createElement('style');
+				style.textContent = `
+					.body-sidebar-container,
+					#sidebar, .desk-sidebar, .body-sidebar, #body-sidebar,
+					.sidebar-section, .layout-side-section.desk-sidebar,
+					.navbar, #navbar {
+						display: none !important;
+					}
+					.content, .main-section, .page-container,
+					.container-fluid, .col.layout-main-section-wrapper {
+						margin-left: 0 !important;
+						padding-left: 0 !important;
+					}
+				`;
+				idoc.head.appendChild(style);
+			} catch (e) {
+				console.error('openEncounterDialog: could not trim iframe chrome', e);
+			}
+		});
+
+		dialog.show();
 	}
 
 	// =============================================
