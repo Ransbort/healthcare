@@ -15,6 +15,7 @@ class PharmacyPOS {
     this.cart_items = [];
     this.customer = null;
     this.patient = null;
+    this.current_encounter = null;
     this.show_orders = false;
     this.active_category = 'all';
     this.medications = [];
@@ -1708,6 +1709,10 @@ class PharmacyPOS {
 				label: 'Patient (Optional)',
 				onchange: () => {
 					this.patient = this.patient_field.get_value();
+					// Changing the patient invalidates whatever encounter we
+					// previously resolved Load Prescriptions against - force
+					// a fresh lookup next time it's clicked.
+					this.current_encounter = null;
 					if (this.patient) {
 						this.customer_field.df.read_only = 1;
 						this.customer_field.refresh();
@@ -2344,12 +2349,50 @@ class PharmacyPOS {
 		try {
 			frappe.dom.freeze(__('Loading medications...'));
 
+			// Resolve the patient's current encounter first. Medication
+			// Requests are tied to a visit via order_group (Patient
+			// Encounter) - without this we'd match on patient alone and
+			// pull in every pending prescription from every past visit,
+			// not just the one the pharmacist is currently dispensing for.
+			const encounter_response = await frappe.call({
+				method: 'frappe.client.get_list',
+				args: {
+					doctype: 'Patient Encounter',
+					filters: {
+						patient: this.patient,
+						docstatus: 1
+					},
+					fields: ['name'],
+					order_by: 'encounter_date desc, creation desc',
+					limit_page_length: 1
+				}
+			});
+
+			const current_encounter = (encounter_response.message && encounter_response.message.length)
+				? encounter_response.message[0].name
+				: null;
+
+			if (!current_encounter) {
+				frappe.dom.unfreeze();
+				frappe.msgprint(__('No encounter found for this patient. Prescriptions can only be loaded from an active encounter.'));
+				return;
+			}
+
+			// Cache which encounter this load was scoped to. If the same
+			// patient later gets a new encounter, the next click of "Load
+			// Prescriptions" re-runs this lookup and picks up that new
+			// encounter (see the lookup above), rather than silently
+			// reusing a stale one - each load is scoped to exactly one
+			// encounter at a time.
+			this.current_encounter = current_encounter;
+
 			const response = await frappe.call({
 				method: 'frappe.client.get_list',
 				args: {
 					doctype: 'Medication Request',
 					filters: {
 						patient: this.patient,
+						order_group: this.current_encounter,
 						docstatus: 1,
 						status: 'active-Medication Request Status',
 						billing_status: ['in', ['Pending', 'Partly Invoiced']]
@@ -2364,7 +2407,7 @@ class PharmacyPOS {
 			});
 
 			if (!response.message || response.message.length === 0) {
-				frappe.msgprint(__('No pending medication requests found'));
+				frappe.msgprint(__('No pending medication requests found for this encounter'));
 				frappe.dom.unfreeze();
 				return;
 			}
@@ -2917,6 +2960,7 @@ class PharmacyPOS {
 			this.cart_items = [];
 			this.patient_field.set_value('');
 			this.patient = null;
+			this.current_encounter = null;
 			this.render_cart();
 			this.update_checkout_button();
 			await this.load_items();
