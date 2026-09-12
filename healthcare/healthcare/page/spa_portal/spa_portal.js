@@ -449,9 +449,6 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 				<button class="tab-btn" data-tab="bookings">
 					<i class="fa fa-calendar"></i> Bookings
 				</button>
-				<button class="tab-btn" data-tab="transactions">
-					<i class="fa fa-list-alt"></i> Transactions
-				</button>
 			</div>
 
 			<!-- Tab 1: Create Invoice -->
@@ -525,6 +522,9 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 					<button class="btn btn-primary" id="filter-btn">
 						<i class="fa fa-filter"></i> Filter
 					</button>
+					<button class="btn btn-primary" id="invoices-print-btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none;">
+						<i class="fa fa-print"></i> Print Report
+					</button>
 				</div>
 				<div class="summary-stats" id="summary-stats"></div>
 				<div class="invoices-table-container" id="invoices-table-container"></div>
@@ -575,33 +575,6 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 				<div id="bookings-calendar-view" style="display: none;">
 					<div class="spa-calendar" id="spa-calendar"></div>
 				</div>
-			</div>
-
-			<!-- Tab 4: Transactions -->
-			<div class="tab-content" id="transactions-tab">
-				<div class="bookings-view-toggle" id="txn-period-toggle">
-					<button class="view-toggle-btn active" data-period="Daily">
-						<i class="fa fa-calendar-o"></i> Daily
-					</button>
-					<button class="view-toggle-btn" data-period="Weekly">
-						<i class="fa fa-calendar"></i> Weekly
-					</button>
-					<button class="view-toggle-btn" data-period="Monthly">
-						<i class="fa fa-calendar-check-o"></i> Monthly
-					</button>
-				</div>
-				<div class="filter-bar">
-					<div data-fieldname="txn_ref_date"></div>
-					<button class="btn btn-primary" id="txn-refresh-btn">
-						<i class="fa fa-refresh"></i> Refresh
-					</button>
-					<button class="btn btn-primary" id="txn-print-btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none;">
-						<i class="fa fa-print"></i> Print Report
-					</button>
-				</div>
-				<div id="txn-range-label" style="margin-bottom: 15px; color: #6c757d; font-weight: 600; font-size: 0.9rem;"></div>
-				<div class="summary-stats" id="txn-summary-stats"></div>
-				<div class="invoices-table-container" id="txn-table-container"></div>
 			</div>
 		</div>
 	`;
@@ -837,29 +810,6 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	bk_filter_to_date.refresh();
 
 	// =============================================
-	// CONTROLS — Transactions Tab
-	// =============================================
-	let txn_ref_date = frappe.ui.form.make_control({
-		parent: page.main.find('[data-fieldname="txn_ref_date"]'),
-		df: {
-			fieldtype: 'Date', fieldname: 'txn_ref_date', label: 'Reference Date',
-			description: __('For Weekly/Monthly, this is any date inside the week/month you want to report on.'),
-			onchange: function() {
-				if (page.main.find('#transactions-tab').hasClass('active')) loadTransactions();
-			}
-		},
-		render_input: true
-	});
-	txn_ref_date.refresh();
-	// Anchored to the site's nowdate() rather than the browser's clock -
-	// same rationale as cashier_portal.js's withServerToday(), since a
-	// guest/staff browser in a different timezone shouldn't shift which
-	// week or month "today" falls into.
-	withServerToday(function(serverToday) {
-		txn_ref_date.set_value(serverToday);
-	});
-
-	// =============================================
 	// SERVICES TABLE LOGIC
 	// =============================================
 	function addService(spa_type_name) {
@@ -1004,22 +954,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 		page.main.find(`#${tab}-tab`).addClass('active');
 		if (tab === 'invoices') loadInvoices();
 		if (tab === 'bookings') loadBookingsList();
-		if (tab === 'transactions') loadTransactions();
 	});
-
-	function withServerToday(callback) {
-		// Same rationale as cashier_portal.js's withServerToday() - defaults
-		// date fields to the site's own nowdate() rather than the browser's
-		// local clock, which matters here specifically because it decides
-		// which Sun-Sat week or which month "today" is treated as falling
-		// into for the Weekly/Monthly transaction report periods.
-		frappe.call({
-			method: 'healthcare.healthcare.page.spa_portal.spa_portal.get_server_today',
-			callback: function(r) {
-				if (r.message) callback(r.message);
-			}
-		});
-	}
 
 	// =============================================
 	// CREATE INVOICE
@@ -1066,7 +1001,17 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 	// =============================================
 	// INVOICES TAB
 	// =============================================
+	let currentInvoicesData = [];
+
 	page.main.find('#filter-btn').on('click', function() { loadInvoices(); });
+
+	page.main.find('#invoices-print-btn').on('click', function() {
+		if (!currentInvoicesData.length) {
+			frappe.show_alert({ message: __('No invoices to print'), indicator: 'orange' }, 5);
+			return;
+		}
+		printInvoices();
+	});
 
 	function loadInvoices() {
 		const fromDate = filter_date.get_value();
@@ -1082,6 +1027,7 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 			args: { date: fromDate, to_date: toDate || null },
 			callback: function(r) {
 				const invoices = r.message || [];
+				currentInvoicesData = invoices;
 				renderSummary(invoices);
 				renderInvoicesTable(invoices);
 			}
@@ -1140,6 +1086,28 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 			const n = $(this).data('invoice');
 			page.main.find(`tr[data-invoice-items="${n}"]`).toggleClass('expanded');
 			$(this).find('.invoice-toggle-icon').toggleClass('expanded');
+		});
+	}
+
+	function printInvoices() {
+		const fromDate = filter_date.get_value();
+		const toDate = filter_to_date.get_value();
+
+		frappe.call({
+			method: 'healthcare.healthcare.page.spa_portal.spa_portal.get_spa_invoices_print',
+			args: {
+				from_date: fromDate,
+				to_date: toDate || null,
+				invoices: currentInvoicesData
+			},
+			callback: function(r) {
+				if (r.message && r.message.html) {
+					const printWindow = window.open('', '_blank');
+					printWindow.document.write(r.message.html);
+					printWindow.document.close();
+					setTimeout(() => { printWindow.print(); }, 500);
+				}
+			}
 		});
 	}
 
@@ -1383,124 +1351,6 @@ frappe.pages['spa-portal'].on_page_load = function(wrapper) {
 		});
 	}
 
-	// =============================================
-	// TRANSACTIONS TAB
-	// =============================================
-	let currentTxnPeriod = 'Daily';
-	let txnTransactionsData = [];
-
-	page.main.find('#txn-period-toggle .view-toggle-btn').on('click', function() {
-		page.main.find('#txn-period-toggle .view-toggle-btn').removeClass('active');
-		$(this).addClass('active');
-		currentTxnPeriod = $(this).data('period');
-		loadTransactions();
-	});
-
-	page.main.find('#txn-refresh-btn').on('click', function() { loadTransactions(); });
-
-	page.main.find('#txn-print-btn').on('click', function() {
-		if (!txnTransactionsData.length) {
-			frappe.show_alert({ message: __('No transactions to print'), indicator: 'orange' }, 5);
-			return;
-		}
-		printTransactions();
-	});
-
-	function loadTransactions() {
-		const refDate = txn_ref_date.get_value();
-		if (!refDate) return;
-
-		frappe.call({
-			method: 'healthcare.healthcare.page.spa_portal.spa_portal.get_spa_transactions',
-			args: { period: currentTxnPeriod, ref_date: refDate },
-			freeze: true,
-			freeze_message: __('Loading transactions...'),
-			callback: function(r) {
-				if (!r.message) return;
-				txnTransactionsData = r.message.transactions;
-				renderTxnRangeLabel(r.message);
-				renderTxnSummary(r.message);
-				renderTxnTable(r.message.transactions);
-			}
-		});
-	}
-
-	function renderTxnRangeLabel(data) {
-		const label = data.from_date === data.to_date
-			? `${data.period}: ${frappe.datetime.str_to_user(data.from_date)}`
-			: `${data.period}: ${frappe.datetime.str_to_user(data.from_date)} - ${frappe.datetime.str_to_user(data.to_date)}`;
-		page.main.find('#txn-range-label').text(label);
-	}
-
-	function renderTxnSummary(data) {
-		page.main.find('#txn-summary-stats').html(`
-			<div class="stat-box"><div class="stat-label">Total Transactions</div><div class="stat-value">${data.total_count}</div></div>
-			<div class="stat-box stat-green"><div class="stat-label">Paid</div><div class="stat-value">${format_currency(data.paid_amount)}</div></div>
-			<div class="stat-box stat-orange"><div class="stat-label">Outstanding</div><div class="stat-value">${format_currency(data.outstanding_amount)}</div></div>
-		`);
-	}
-
-	function renderTxnTable(transactions) {
-		if (!transactions.length) {
-			page.main.find('#txn-table-container').html(`
-				<div class="empty-state"><i class="fa fa-file-text-o"></i><h4>${__('No Transactions Found')}</h4><p>${__('No spa transactions found for this period.')}</p></div>
-			`);
-			return;
-		}
-
-		let rows = '';
-		transactions.forEach(function(t, idx) {
-			let statusBadge = '';
-			if (t.status === 'Paid') statusBadge = '<span class="badge badge-success">Paid</span>';
-			else if (t.outstanding_amount > 0) statusBadge = '<span class="badge badge-warning">Unpaid</span>';
-			else statusBadge = `<span class="badge badge-secondary">${t.status || ''}</span>`;
-
-			rows += `
-				<tr>
-					<td>${idx + 1}</td>
-					<td>${t.name}</td>
-					<td>${t.posting_date}</td>
-					<td>${t.party_name || ''}</td>
-					<td>${t.services || ''}</td>
-					<td>${statusBadge}</td>
-					<td style="text-align:right;">${format_currency(t.grand_total)}</td>
-				</tr>
-			`;
-		});
-
-		page.main.find('#txn-table-container').html(`
-			<table class="invoices-table">
-				<thead>
-					<tr>
-						<th>#</th><th>${__('Invoice ID')}</th><th>${__('Date')}</th>
-						<th>${__('Customer/Patient')}</th><th>${__('Services')}</th>
-						<th>${__('Status')}</th><th style="text-align:right;">${__('Amount')}</th>
-					</tr>
-				</thead>
-				<tbody>${rows}</tbody>
-			</table>
-		`);
-	}
-
-	function printTransactions() {
-		const refDate = txn_ref_date.get_value();
-		frappe.call({
-			method: 'healthcare.healthcare.page.spa_portal.spa_portal.get_spa_transactions_print',
-			args: {
-				period: currentTxnPeriod,
-				ref_date: refDate,
-				transactions: txnTransactionsData
-			},
-			callback: function(r) {
-				if (r.message && r.message.html) {
-					const printWindow = window.open('', '_blank');
-					printWindow.document.write(r.message.html);
-					printWindow.document.close();
-					setTimeout(() => { printWindow.print(); }, 500);
-				}
-			}
-		});
-	}
 };
 
 
