@@ -2599,6 +2599,9 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
                                     <i class="fa fa-times"></i>
                                 </button>
                             ` : `
+                                <button class="btn btn-info btn-sm btn-view-session-notes" data-name="${s.name}">
+                                    <i class="fa fa-eye"></i> View
+                                </button>
                                 <button class="btn btn-secondary btn-sm" disabled>
                                     <i class="fa fa-check-circle"></i> Delivered
                                 </button>
@@ -2623,6 +2626,70 @@ frappe.pages['rehab-portal'].on_page_load = function(wrapper) {
         });
         container.find('.btn-cancel-session').on('click', function() {
             cancelScheduledSession($(this).data('name'));
+        });
+        container.find('.btn-view-session-notes').on('click', function() {
+            openSessionNotesDialog($(this).data('name'));
+        });
+    }
+
+    function openSessionNotesDialog(therapy_session) {
+        frappe.call({
+            method: 'healthcare.healthcare.page.rehab_portal.rehab_portal.get_therapy_session_notes',
+            args: { therapy_session: therapy_session },
+            freeze: true,
+            freeze_message: __('Loading notes...'),
+            callback: function(r) {
+                if (!r.message) return;
+                const session = r.message.session || {};
+                const notes = r.message.notes || [];
+
+                let notesHtml = '';
+                if (!notes.length) {
+                    notesHtml = `
+                        <div class="empty-state">
+                            <i class="fa fa-sticky-note-o"></i>
+                            <h4>${__('No Notes Recorded')}</h4>
+                            <p>${__('This session was completed without any therapist notes.')}</p>
+                        </div>
+                    `;
+                } else {
+                    notesHtml = notes.map(function(n) {
+                        const when = frappe.datetime.str_to_user(n.creation);
+                        return `
+                            <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px 15px; margin-bottom: 10px; background: #f8f9fa;">
+                                <div style="font-weight: 600; color: #495057; margin-bottom: 4px;">
+                                    ${frappe.utils.escape_html(n.comment_by_name)}
+                                    <span style="font-weight: 400; color: #6c757d; font-size: 0.8rem;">- ${when}</span>
+                                </div>
+                                <div style="white-space: pre-wrap;">${frappe.utils.escape_html(n.content)}</div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                const dialog = new frappe.ui.Dialog({
+                    title: __('Therapist Notes: {0}', [session.patient_name || therapy_session]),
+                    size: 'large',
+                    fields: [
+                        {
+                            fieldtype: 'HTML',
+                            fieldname: 'session_notes_html',
+                            options: `
+                                <div style="padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px; margin-bottom: 15px;">
+                                    <h5 style="margin: 0 0 5px 0; color: white;">${frappe.utils.escape_html(session.patient_name || '')}</h5>
+                                    <p style="margin: 0; opacity: 0.9; font-size: 0.9rem;">
+                                        ${frappe.utils.escape_html(session.therapy_type || '')}
+                                        &middot; ${frappe.utils.escape_html(session.practitioner_name || '')}
+                                        &middot; ${session.start_date || ''} ${session.start_time ? session.start_time.substring(0,5) : ''}
+                                    </p>
+                                </div>
+                                ${notesHtml}
+                            `
+                        }
+                    ]
+                });
+                dialog.show();
+            }
         });
     }
 

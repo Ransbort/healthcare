@@ -1132,3 +1132,43 @@ def get_patient_assessments(patient):
 		fields=["name", "assessment_template", "assessment_datetime", "total_score_obtained", "total_score"],
 		order_by="assessment_datetime desc",
 	)
+
+
+@frappe.whitelist()
+def get_therapy_session_notes(therapy_session):
+	"""Notes a therapist logged when delivering a session - complete_
+	therapy_session() above records these as a plain Comment against the
+	Therapy Session (session.add_comment("Comment", notes)) rather than a
+	dedicated field, so this reads them back the same way the Desk
+	timeline would. Also returns a small session summary so the "View"
+	popup on the Schedule tab's Completed rows (rehab_portal.js's
+	renderSchedList()) doesn't need a second round trip just to show
+	who/what/when above the notes themselves."""
+	session = frappe.db.get_value(
+		"Therapy Session",
+		therapy_session,
+		["patient_name", "therapy_type", "practitioner", "start_date", "start_time"],
+		as_dict=True,
+	)
+	if not session:
+		frappe.throw(_("Therapy Session {0} not found").format(therapy_session))
+
+	session["practitioner_name"] = (
+		frappe.db.get_value("Healthcare Practitioner", session.practitioner, "practitioner_name")
+		or session.practitioner
+	)
+
+	comments = frappe.get_all(
+		"Comment",
+		filters={
+			"reference_doctype": "Therapy Session",
+			"reference_name": therapy_session,
+			"comment_type": "Comment",
+		},
+		fields=["content", "comment_by", "creation"],
+		order_by="creation asc",
+	)
+	for c in comments:
+		c["comment_by_name"] = frappe.db.get_value("User", c["comment_by"], "full_name") or c["comment_by"]
+
+	return {"session": session, "notes": comments}
