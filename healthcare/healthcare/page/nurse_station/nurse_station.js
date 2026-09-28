@@ -303,6 +303,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			.badge-consult { background: #ffe5d0; color: #7a3e00; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-completed { background: #d4edda; color: #155724; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-admitted { background: #d1f2e0; color: #0f5e3c; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+			.badge-discharge-scheduled { background: #ffe8cc; color: #8a4b00; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 
 			.empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
 			.empty-state i { font-size: 64px; margin-bottom: 20px; opacity: 0.3; }
@@ -438,7 +439,8 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			'With Doctor': 'badge-doctor',
 			'In Consultation': 'badge-consult',
 			'Completed': 'badge-completed',
-			'Admitted': 'badge-admitted'
+			'Admitted': 'badge-admitted',
+			'Discharge Scheduled': 'badge-discharge-scheduled'
 		};
 		return `<span class="${map[status] || 'badge-registered'}">${status || ''}</span>`;
 	}
@@ -952,9 +954,18 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 	// =============================================
 	// "Search for patients that have been admitted" - a Patient Link
 	// field, same autocomplete-and-select UX Laboratory Portal's own
-	// patient search already uses, scoped to Inpatient Record.status ==
-	// "Admitted" (see get_admitted_patients()'s docstring). Blank search
-	// lists everyone currently admitted.
+	// patient search already uses, scoped to Inpatient Record.status in
+	// ("Admitted", "Discharge Scheduled") (see get_admitted_patients()'s
+	// docstring). Blank search lists everyone currently admitted or
+	// mid-discharge. Schedule Discharge/Discharge call the same core
+	// inpatient_record.py functions the full Inpatient Record form's own
+	// buttons use (schedule_discharge() module function, discharge()/
+	// add_service_unit_rent_to_billable_items() doc methods via
+	// run_doc_method) rather than duplicating that logic here - same
+	// reasoning as Admission Orders' Accept/Reject above, and it means the
+	// "Incomplete Services" block (see inpatient_record.py's
+	// validate_incomplete_service_requests()) shows up automatically on
+	// Discharge with no extra handling needed.
 	let admitted_patient_field = frappe.ui.form.make_control({
 		parent: page.main.find('[data-fieldname="admitted_patient"]'),
 		df: {
@@ -999,17 +1010,22 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 
 		let body = '';
 		records.forEach(function(record) {
+			let actions = `<button class="btn btn-xs btn-default btn-view-inpatient" data-name="${record.name}">${__('View')}</button>`;
+			if (record.status === 'Admitted') {
+				actions += ` <button class="btn btn-xs btn-warning btn-schedule-discharge" data-name="${record.name}" data-patient="${record.patient}">${__('Schedule Discharge')}</button>`;
+			} else if (record.status === 'Discharge Scheduled') {
+				actions += ` <button class="btn btn-xs btn-danger btn-discharge-patient" data-name="${record.name}">${__('Discharge')}</button>`;
+			}
 			body += `
 				<tr class="admitted-row" data-name="${record.name}">
 					<td>${record.patient_name || ''}</td>
+					<td>${statusBadge(record.status)}</td>
 					<td>${record.medical_department || ''}</td>
 					<td>${record.primary_practitioner_name || record.primary_practitioner || ''}</td>
 					<td>${record.admission_service_unit_type || ''}</td>
 					<td>${frappe.datetime.str_to_user(record.admitted_datetime) || ''}</td>
 					<td>${record.expected_discharge || ''}</td>
-					<td>
-						<button class="btn btn-xs btn-default btn-view-inpatient" data-name="${record.name}">${__('View')}</button>
-					</td>
+					<td>${actions}</td>
 				</tr>
 			`;
 		});
@@ -1018,6 +1034,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 				<thead>
 					<tr>
 						<th>${__('Patient')}</th>
+						<th>${__('Status')}</th>
 						<th>${__('Department')}</th>
 						<th>${__('Practitioner')}</th>
 						<th>${__('Service Unit')}</th>
@@ -1039,6 +1056,110 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			// navigation sidesteps the SPA route/render pipeline entirely.
 			window.location.href = frappe.utils.get_form_link('Inpatient Record', $(this).data('name'));
 		});
+
+		container.find('.btn-schedule-discharge').on('click', function() {
+			openScheduleDischargeDialog($(this).data('name'), $(this).data('patient'));
+		});
+
+		container.find('.btn-discharge-patient').on('click', function() {
+			const inpatient_record = $(this).data('name');
+			frappe.confirm(
+				__('Discharge this patient? This is the final step - it will fail with a list of what\'s still open if any orders on this admission haven\'t been carried out yet.'),
+				function() {
+					frappe.call({
+						method: 'run_doc_method',
+						args: { dt: 'Inpatient Record', dn: inpatient_record, method: 'discharge' },
+						freeze: true,
+						freeze_message: __('Processing Inpatient Discharge'),
+						callback: function(r) {
+							if (!r.exc) {
+								frappe.show_alert({ message: __('Patient discharged'), indicator: 'green' }, 5);
+								loadAdmittedPatients();
+							}
+						}
+					});
+				}
+			);
+		});
+	}
+
+	// Mirrors inpatient_record.js's own schedule_discharge(frm) dialog
+	// field-for-field, and the same schedule -> generate billables sequence
+	// its "Schedule Discharge" button runs via frappe.run_serially - so a
+	// discharge scheduled from here looks identical to one scheduled from
+	// the full Inpatient Record form.
+	function openScheduleDischargeDialog(inpatient_record, patient) {
+		const dialog = new frappe.ui.Dialog({
+			title: __('Schedule Discharge'),
+			fields: [
+				{
+					fieldtype: 'Link',
+					label: __('Discharge Practitioner'),
+					fieldname: 'discharge_practitioner',
+					options: 'Healthcare Practitioner'
+				},
+				{
+					fieldtype: 'Datetime',
+					label: __('Discharge Ordered DateTime'),
+					fieldname: 'discharge_ordered_datetime',
+					default: frappe.datetime.now_datetime()
+				},
+				{
+					fieldtype: 'Date',
+					label: __('Followup Date'),
+					fieldname: 'followup_date'
+				},
+				{ fieldtype: 'Column Break' },
+				{
+					fieldtype: 'Small Text',
+					label: __('Discharge Instructions'),
+					fieldname: 'discharge_instructions'
+				},
+				{ fieldtype: 'Section Break', label: __('Discharge Summary') },
+				{
+					fieldtype: 'Long Text',
+					label: __('Discharge Note'),
+					fieldname: 'discharge_note'
+				}
+			],
+			primary_action_label: __('Order Discharge'),
+			primary_action: function() {
+				const discharge_order = {
+					patient: patient,
+					discharge_practitioner: dialog.get_value('discharge_practitioner'),
+					discharge_ordered_datetime: dialog.get_value('discharge_ordered_datetime'),
+					followup_date: dialog.get_value('followup_date'),
+					discharge_instructions: dialog.get_value('discharge_instructions'),
+					discharge_note: dialog.get_value('discharge_note')
+				};
+				frappe.call({
+					method: 'healthcare.healthcare.doctype.inpatient_record.inpatient_record.schedule_discharge',
+					args: { discharge_order: discharge_order },
+					freeze: true,
+					freeze_message: __('Scheduling Inpatient Discharge'),
+					callback: function(r) {
+						if (r.exc) {
+							return;
+						}
+						dialog.hide();
+						frappe.call({
+							method: 'run_doc_method',
+							args: {
+								dt: 'Inpatient Record',
+								dn: inpatient_record,
+								method: 'add_service_unit_rent_to_billable_items'
+							},
+							callback: function() {
+								frappe.show_alert({ message: __('Discharge scheduled'), indicator: 'green' }, 5);
+								loadAdmittedPatients();
+							}
+						});
+					}
+				});
+			}
+		});
+		dialog.show();
+		dialog.$wrapper.find('.modal-dialog').css('width', '800px');
 	}
 
 	loadAll();

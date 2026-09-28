@@ -304,16 +304,25 @@ def get_pending_admission_orders():
 
 @frappe.whitelist()
 def get_admitted_patients(patient=None):
-	"""Currently admitted patients (Inpatient Record.status == "Admitted"),
-	optionally narrowed to one patient - backs the Admitted Patients tab's
-	search, so a nurse can look up where an inpatient is and who's treating
-	them without leaving this page. Deliberately scoped to "Admitted" only
-	(not Admission Scheduled/Discharge Scheduled/Discharged/Cancelled) -
-	this is a "who's here right now" lookup, not a full inpatient history.
+	"""Currently admitted or discharge-in-progress patients (Inpatient
+	Record.status in "Admitted"/"Discharge Scheduled"), optionally narrowed
+	to one patient - backs the Admitted Patients tab's search, so a nurse
+	can look up where an inpatient is, who's treating them, and carry the
+	admission through to actual discharge without leaving this page.
+
+	Includes "Discharge Scheduled" alongside "Admitted" (not just the
+	latter, as this used to be scoped) precisely so a patient doesn't drop
+	out of this list the moment a practitioner schedules their discharge -
+	that's exactly the point where the final Discharge action (see
+	inpatient_record.py's discharge()/validate_incomplete_service_requests())
+	becomes available, and a nurse needs to still be able to find them here
+	to run it. Deliberately excludes Admission Scheduled/Discharged/
+	Cancelled - this is a "who's here or being discharged right now"
+	lookup, not a full inpatient history.
 	"""
 	_require_nurse_access()
 
-	filters = {"status": "Admitted"}
+	filters = {"status": ["in", ["Admitted", "Discharge Scheduled"]]}
 	if patient:
 		filters["patient"] = patient
 
@@ -324,6 +333,7 @@ def get_admitted_patients(patient=None):
 			"name",
 			"patient",
 			"patient_name",
+			"status",
 			"medical_department",
 			"primary_practitioner",
 			"secondary_practitioner",
