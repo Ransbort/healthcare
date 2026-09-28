@@ -812,7 +812,16 @@ def validate_incomplete_service_requests(inpatient_record):
 		"patient": inpatient_record.patient,
 		"inpatient_record": inpatient_record.name,
 		"docstatus": 1,
-		"status": ["not in", ["Completed"]],
+		# Service Request.status is a Link to Code Value, not a plain Select -
+		# every place in this app that actually completes an order (Lab Test,
+		# Clinical Procedure, Therapy Session, all via
+		# service_request.set_service_request_status()) writes the Code
+		# Value's own name, "completed-Request Status", never the literal
+		# string "Completed". Filtering on "Completed" here matched nothing
+		# real, ever, so every submitted Service Request on an admission -
+		# including ones genuinely marked Completed - got listed as an
+		# incomplete order blocking discharge.
+		"status": ["not in", ["completed-Request Status"]],
 	}
 
 	service_requests = frappe.db.get_list("Service Request", filters=filters, pluck="name")
