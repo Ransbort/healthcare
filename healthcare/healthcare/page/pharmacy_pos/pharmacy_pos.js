@@ -1158,6 +1158,9 @@ class PharmacyPOS {
 						flex-wrap: wrap;
 						gap: 4px;
 						margin-bottom: 4px;
+						background: #dcdcda;
+						padding: 8px;
+						border-radius: 6px;
 					}
 
 					.cart-item-tag {
@@ -1170,8 +1173,8 @@ class PharmacyPOS {
 					}
 
 					.cart-item-tag.strength {
-						background: var(--bg-card);
-						color: var(--text-muted);
+						background: rgba(16, 185, 129, 0.1);
+						color: var(--success);
 					}
 
 					.cart-item-tag.dosage-form {
@@ -1180,8 +1183,28 @@ class PharmacyPOS {
 					}
 
 					.cart-item-tag.prescription {
-						background: rgba(16, 185, 129, 0.1);
-						color: var(--success);
+						background: var(--bg-card);
+						color: var(--text-muted);
+						font-size: 12px;
+						flex: 1 1 0;
+						justify-content: center;
+					}
+
+					.cart-item-prescription-group {
+						display: flex;
+						align-items: center;
+						flex-wrap: wrap;
+						gap: 4px;
+						flex-basis: 100%;
+						background: var(--bg-elevated);
+						padding: 6px;
+						border-radius: 4px;
+						box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+					}
+
+					.cart-item-tag.refills {
+						background: rgba(239, 68, 68, 0.1);
+						color: var(--danger);
 					}
 
 					.cart-item-strength {
@@ -1205,13 +1228,13 @@ class PharmacyPOS {
 
 					.cart-item-comment {
 						font-size: 11px;
-						color: var(--warning);
+						color: var(--text-muted);
 						font-style: italic;
 						margin-top: 6px;
 						padding: 6px 8px;
-						background: rgba(245, 158, 11, 0.1);
+						background: var(--bg-card);
 						border-radius: 6px;
-						border-left: 2px solid var(--warning);
+						border-left: 2px solid var(--border-color);
 					}
 
 					.cart-item-remove {
@@ -2464,6 +2487,25 @@ class PharmacyPOS {
 				return 'out_of_stock';
 			}
 
+			// "Number Of Repeats Allowed" means the patient can come back and
+			// get this refilled that many more times - it's not an
+			// instruction to hand over every repeat in one transaction.
+			// remaining_qty (quantity + repeats * quantity, minus whatever's
+			// already been invoiced) is the lifetime cap across every visit,
+			// not what belongs in a single checkout. Default to handing over
+			// one dispensing cycle (med_req.quantity) per visit instead,
+			// falling back to remaining_qty for the last, possibly partial,
+			// cycle. The pharmacist can still raise it with the qty stepper
+			// (capped at remaining_qty - see update_qty) if they genuinely
+			// mean to dispense more than one cycle right now.
+			const dispense_qty = Math.min(med_req.quantity || 1, remaining_qty);
+
+			// How many more refills are left after this dispense, so the
+			// cart can show it (e.g. "12 refills left") rather than silently
+			// under-filling what looks like the full prescription.
+			const cycles_remaining = Math.round(remaining_qty / (med_req.quantity || 1));
+			const refills_remaining = Math.max(0, cycles_remaining - 1);
+
 			this.add_item_to_cart({
 				medication_name: med.medication_name,
 				generic_name: med.generic_name,
@@ -2478,8 +2520,10 @@ class PharmacyPOS {
 				dosage: med_req.dosage,
 				period: med_req.period,
 				comment: med_req.comment,
-				image: med.image
-			}, remaining_qty);
+				image: med.image,
+				max_dispensable_qty: remaining_qty,
+				refills_remaining: refills_remaining
+			}, dispense_qty);
 
 			return 'added';
 
@@ -2552,6 +2596,12 @@ class PharmacyPOS {
 				dosage: med.dosage || '',
 				period: med.period || '',
 				comment: med.comment || '',
+				// Lifetime cap across every refill on this Medication Request
+				// (undefined for items added straight from the grid, which
+				// have no prescription/repeat concept - those stay capped by
+				// stock only, same as before).
+				max_dispensable_qty: med.max_dispensable_qty,
+				refills_remaining: med.refills_remaining || 0,
 				is_medication: true,
 				stock_qty: med_in_list ? med_in_list.stock_qty : 0,
 				image: med.image || (med_in_list ? med_in_list.image : '') || ''
@@ -2583,21 +2633,32 @@ class PharmacyPOS {
 			
 			// Strength display
 			const strength_html = item.strength ?
-				`<span class="cart-item-tag strength">💊 ${item.strength}</span>` : '';
+				`<span class="cart-item-tag strength">${item.strength}</span>` : '';
 			
 			// Dosage form display (from medication)
 			const dosage_form_html = item.dosage_form ?
 				`<span class="cart-item-tag dosage-form">📦 ${item.dosage_form}</span>` : '';
 
-			// Prescription details (dose, dosage/frequency, period) - different from dosage_form
+			// Prescription details (dose, dosage/frequency, period) - different from
+			// dosage_form. Each gets its own tag (same "prescription" background on
+			// all three), wrapped in a group that carries its own background and
+			// the doctor icon once, rather than repeating it per tag.
 			let prescription_html = '';
 			if (item.dose || item.dosage || item.period) {
-				const parts = [];
-				if (item.dose) parts.push(item.dose);
-				if (item.dosage) parts.push(item.dosage);
-				if (item.period) parts.push(item.period);
-				prescription_html = `<span class="cart-item-tag prescription">📋 ${parts.join(' • ')}</span>`;
+				const dose_span = item.dose ?
+					`<span class="cart-item-tag prescription">${item.dose}</span>` : '';
+				const dosage_span = item.dosage ?
+					`<span class="cart-item-tag prescription">${item.dosage}</span>` : '';
+				const period_span = item.period ?
+					`<span class="cart-item-tag prescription">${item.period}</span>` : '';
+				prescription_html = `<div class="cart-item-prescription-group">🩺 ${dose_span}${dosage_span}${period_span}</div>`;
 			}
+
+			// Refills left on this Medication Request after the current
+			// dispense, so it's clear this is one cycle of a repeatable
+			// prescription rather than the whole thing.
+			const refills_html = item.refills_remaining > 0 ?
+				`<span class="cart-item-tag refills">🔁 ${item.refills_remaining} refill${item.refills_remaining === 1 ? '' : 's'} left</span>` : '';
 
 			const comment_html = item.comment ?
 				`<div class="cart-item-comment">💬 ${item.comment}</div>` : '';
@@ -2618,6 +2679,7 @@ class PharmacyPOS {
 							<div class="cart-item-tags">
 								${strength_html}
 								${dosage_form_html}
+								${refills_html}
 								${prescription_html}
 							</div>
 							${comment_html}
@@ -2664,6 +2726,19 @@ class PharmacyPOS {
 						});
 						return;
 					}
+				}
+
+				// Don't let the stepper dispense past what this prescription
+				// has left across all its repeats (undefined for items added
+				// straight from the grid, which aren't tied to a Medication
+				// Request and have no such cap).
+				if (item.max_dispensable_qty && new_qty > item.max_dispensable_qty) {
+					frappe.msgprint({
+						title: __('Repeat Limit Reached'),
+						message: __('This prescription has only {0} unit(s) left across all its repeats - you cannot dispense more than that in total.', [item.max_dispensable_qty]),
+						indicator: 'orange'
+					});
+					return;
 				}
 			}
 
