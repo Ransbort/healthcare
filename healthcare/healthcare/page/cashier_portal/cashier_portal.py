@@ -31,6 +31,18 @@ from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice, 
 # care how the bucket was decided.
 DEPARTMENT_FIELD = "custom_department"
 
+# Inpatient invoices are a separate case from the DEPARTMENT_FIELD scheme
+# above - inpatient_record.create_invoice_for_inpatient() never sets
+# custom_department, so these are identified instead by carrying a Sales
+# Invoice Item whose reference_dt is one of these two child doctypes (the
+# same two types that function tags, and the same approach
+# sports_complex/page/cashier/cashier.py's own get_inpatient_pending_payments()
+# uses independently for its own Cashier page). See _get_inpatient_invoices()
+# below - and note _get_department_invoices()'s "Other Invoices" bucket has
+# to explicitly exclude these names, since an untagged custom_department
+# would otherwise put them there too.
+INPATIENT_REFERENCE_DOCTYPES = ["Inpatient Record Item", "Inpatient Occupancy"]
+
 
 def _notify(event, payload):
     """Broadcast a realtime event to everyone listening in this site.
@@ -56,7 +68,11 @@ def get_patient_data(patient_id):
 
     patient = frappe.get_doc("Patient", patient_id).as_dict()
 
-    other_invoices = _get_department_invoices(patient_id, "patient", exclude_departments=True)
+    inpatient_invoices = _get_inpatient_invoices(patient_id, "patient")
+    other_invoices = _get_department_invoices(
+        patient_id, "patient", exclude_departments=True,
+        exclude_invoice_names=[inv["name"] for inv in inpatient_invoices],
+    )
     laboratory_invoices = _get_department_invoices(patient_id, "patient", department="Laboratory")
     rehabilitation_invoices = _get_department_invoices(patient_id, "patient", department="Rehabilitation")
     pharmacy_orders = _get_pharmacy_orders(patient_id, "patient")
@@ -68,6 +84,7 @@ def get_patient_data(patient_id):
         "laboratory_invoices": laboratory_invoices,
         "rehabilitation_invoices": rehabilitation_invoices,
         "pharmacy_orders": pharmacy_orders,
+        "inpatient_invoices": inpatient_invoices,
         "payments": payments,
     }
 
@@ -79,7 +96,11 @@ def get_customer_data(customer_id):
 
     customer = frappe.get_doc("Customer", customer_id).as_dict()
 
-    other_invoices = _get_department_invoices(customer_id, "customer", exclude_departments=True)
+    inpatient_invoices = _get_inpatient_invoices(customer_id, "customer")
+    other_invoices = _get_department_invoices(
+        customer_id, "customer", exclude_departments=True,
+        exclude_invoice_names=[inv["name"] for inv in inpatient_invoices],
+    )
     laboratory_invoices = _get_department_invoices(customer_id, "customer", department="Laboratory")
     rehabilitation_invoices = _get_department_invoices(customer_id, "customer", department="Rehabilitation")
     pharmacy_orders = _get_pharmacy_orders(customer_id, "customer")
@@ -91,6 +112,7 @@ def get_customer_data(customer_id):
         "laboratory_invoices": laboratory_invoices,
         "rehabilitation_invoices": rehabilitation_invoices,
         "pharmacy_orders": pharmacy_orders,
+        "inpatient_invoices": inpatient_invoices,
         "payments": payments,
     }
 
@@ -124,7 +146,8 @@ def _party_filters(party_id, party_type, doctype="Sales Invoice"):
     return {"customer": party_id}
 
 
-def _get_department_invoices(party_id, party_type, department=None, exclude_departments=False):
+def _get_department_invoices(party_id, party_type, department=None, exclude_departments=False,
+                              exclude_invoice_names=None):
     filters = {
         "docstatus": 1,
         "outstanding_amount": [">", 0],
@@ -137,6 +160,13 @@ def _get_department_invoices(party_id, party_type, department=None, exclude_depa
         # "Consultation" has no dedicated bucket - it lands here in
         # "Other Invoices" along with anything genuinely untagged.
         filters[DEPARTMENT_FIELD] = ["in", ["", "Other", "Consultation", None]]
+        # Inpatient invoices are untagged too (see INPATIENT_REFERENCE_
+        # DOCTYPES above) - without this they'd land here as well as in
+        # their own Inpatient tab. Callers pass the names their own
+        # _get_inpatient_invoices() call already found for this same
+        # party, so this never re-runs that query.
+        if exclude_invoice_names:
+            filters["name"] = ["not in", exclude_invoice_names]
 
     invoices = frappe.get_all(
         "Sales Invoice",
@@ -148,6 +178,56 @@ def _get_department_invoices(party_id, party_type, department=None, exclude_depa
         order_by="posting_date desc",
     )
     return invoices
+
+
+def _get_inpatient_invoices(party_id=None, party_type=None):
+    """Submitted Sales Invoices with something still outstanding that carry
+    at least one Inpatient Ward charge - identified by a line whose
+    reference_dn is one of INPATIENT_REFERENCE_DOCTYPES, the same
+    reference-based approach used throughout this admission's billing (see
+    get_inpatient_invoices() in healthcare/doctype/inpatient_record/
+    inpatient_record.py and get_inpatient_pending_payments() in
+    sports_complex/page/cashier/cashier.py - this is a third, independent
+    copy of the same idea for this portal, kept local rather than
+    cross-app imported for the same reason cashier.py gives its own copy).
+
+    Pass party_id/party_type (same 'patient'/'customer' + id convention as
+    _party_filters above) to scope this to one patient or customer; leave
+    both None for the portal-wide queue (get_all_pending_payments).
+    """
+    sii = frappe.qb.DocType("Sales Invoice Item")
+    si = frappe.qb.DocType("Sales Invoice")
+
+    query = (
+        frappe.qb.from_(si)
+        .join(sii)
+        .on(sii.parent == si.name)
+        .select(si.name)
+        .where(
+            (si.docstatus == 1)
+            & (si.outstanding_amount > 0)
+            & (sii.reference_dt.isin(INPATIENT_REFERENCE_DOCTYPES))
+        )
+        .distinct()
+    )
+    if party_id:
+        for field, value in _party_filters(party_id, party_type, doctype="Sales Invoice").items():
+            query = query.where(getattr(si, field) == value)
+
+    invoice_names = [row[0] for row in query.run()]
+    if not invoice_names:
+        return []
+
+    return frappe.get_all(
+        "Sales Invoice",
+        filters={"name": ["in", invoice_names]},
+        fields=[
+            "name", "posting_date", "due_date", "status",
+            "outstanding_amount", "grand_total", "currency",
+            "patient", "patient_name", "customer", "customer_name",
+        ],
+        order_by="posting_date desc",
+    )
 
 
 def _get_pharmacy_orders(party_id, party_type):
@@ -241,15 +321,24 @@ def get_all_pending_payments():
 		"patient", "patient_name", "customer", "customer_name",
 	]
 
+	inpatient_invoices = _get_inpatient_invoices()
+
+	other_filters = {
+		"docstatus": 1,
+		"outstanding_amount": [">", 0],
+		# "Consultation" has no dedicated bucket - it lands here
+		# along with anything genuinely untagged.
+		DEPARTMENT_FIELD: ["in", ["", "Other", "Consultation", None]],
+	}
+	if inpatient_invoices:
+		# Same exclusion _get_department_invoices() applies per-party -
+		# inpatient invoices are untagged, so without this they'd land
+		# here too, alongside their own Inpatient bucket.
+		other_filters["name"] = ["not in", [inv["name"] for inv in inpatient_invoices]]
+
 	other_invoices = frappe.get_all(
 		"Sales Invoice",
-		filters={
-			"docstatus": 1,
-			"outstanding_amount": [">", 0],
-			# "Consultation" has no dedicated bucket - it lands here
-			# along with anything genuinely untagged.
-			DEPARTMENT_FIELD: ["in", ["", "Other", "Consultation", None]],
-		},
+		filters=other_filters,
 		fields=base_invoice_fields,
 		order_by="posting_date desc",
 	)
@@ -285,6 +374,7 @@ def get_all_pending_payments():
 		"laboratory_invoices": laboratory_invoices,
 		"rehabilitation_invoices": rehabilitation_invoices,
 		"pharmacy_orders": pharmacy_orders,
+		"inpatient_invoices": inpatient_invoices,
 	}
 
 
@@ -346,6 +436,29 @@ def create_payment_entry(invoice_name, mode_of_payment, remarks=None, reference_
         "message": f"Payment received for {invoice_name}",
         "encounter": None,
     })
+
+    # Nurse Station's Admitted Patients tab shows each admission's own
+    # outstanding balance (get_admitted_patients() in
+    # healthcare/page/nurse_station/nurse_station.py) but only refreshes
+    # it on page load/its own actions - a payment collected here on the
+    # Inpatient tab would otherwise sit stale on any Nurse Station
+    # already open. That page already listens for this exact
+    # department="nurse" queue_update event (on_page_load in
+    # nurse_station.js calls loadAll(), which includes
+    # loadAdmittedPatients(), on every one), so reusing it is what makes
+    # the balance there update live - no polling needed. Gated on this
+    # actually being an inpatient invoice (carrying a line referencing
+    # Inpatient Record Item/Inpatient Occupancy - see
+    # INPATIENT_REFERENCE_DOCTYPES above) so a Lab/Pharmacy/Rehab/Other
+    # payment doesn't needlessly nudge every open Nurse Station.
+    if frappe.db.exists(
+        "Sales Invoice Item",
+        {"parent": invoice_name, "reference_dt": ["in", INPATIENT_REFERENCE_DOCTYPES]},
+    ):
+        _notify("queue_update", {
+            "department": "nurse",
+            "message": f"Payment received for {invoice_name}",
+        })
 
     return {"status": "Success", "name": pe.name}
 

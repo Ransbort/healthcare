@@ -160,6 +160,19 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 				margin-bottom: 16px;
 				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 				flex-shrink: 0;
+				/* .queue-table thead below is position:sticky with its own
+				   z-index:10 (so it stays on top of scrolling rows) - without
+				   a raised z-index of its own here, this card and the sticky
+				   thead end up compared directly in the shared stacking
+				   context, and the Patient Link field's awesomplete dropdown
+				   (an absolutely-positioned child with no z-index, so treated
+				   as 0) loses to it and renders half-hidden under the results
+				   table. position:relative + a z-index above 10 gives this
+				   whole card - dropdown included - its own stacking context
+				   that paints above the table regardless of the table's own
+				   internal z-index. */
+				position: relative;
+				z-index: 20;
 			}
 
 			.search-input-group {
@@ -183,7 +196,6 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			#admitted-clear-btn {
 				border-radius: 8px;
 				font-weight: 600;
-				padding: 8px 16px;
 				background: transparent;
 				border: 1px solid #dee2e6;
 				color: #495057;
@@ -295,6 +307,12 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			.queue-table td { padding: 12px; font-size: 0.9rem; border-bottom: 1px solid #e9ecef; }
 			.queue-table tbody tr:hover { background: #f8f9fa; }
 
+			/* Every status badge below is a single-line pill - without this,
+			   a long label (Admission Scheduled/Discharge Scheduled) wraps
+			   onto a second line inside the Admitted Patients table's
+			   narrow Status column and looks broken. */
+			[class^="badge-"] { white-space: nowrap; }
+
 			.badge-registered { background: #e2e3e5; color: #383d41; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-pending { background: #fff3cd; color: #856404; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-paid { background: #d1ecf1; color: #0c5460; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
@@ -304,6 +322,8 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			.badge-completed { background: #d4edda; color: #155724; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-admitted { background: #d1f2e0; color: #0f5e3c; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 			.badge-discharge-scheduled { background: #ffe8cc; color: #8a4b00; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+			.badge-admission-scheduled { background: #dbe4ff; color: #2c4b9e; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+			.badge-owes-balance { background: #f8d7da; color: #842029; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
 
 			.empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
 			.empty-state i { font-size: 64px; margin-bottom: 20px; opacity: 0.3; }
@@ -440,9 +460,20 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			'In Consultation': 'badge-consult',
 			'Completed': 'badge-completed',
 			'Admitted': 'badge-admitted',
-			'Discharge Scheduled': 'badge-discharge-scheduled'
+			'Discharge Scheduled': 'badge-discharge-scheduled',
+			'Admission Scheduled': 'badge-admission-scheduled'
 		};
-		return `<span class="${map[status] || 'badge-registered'}">${status || ''}</span>`;
+		// Admission Scheduled/Discharge Scheduled are the two long enough
+		// to wrap onto a second line inside the Admitted Patients table's
+		// narrow Status column (see the badge CSS's own nowrap fix below,
+		// which helps but still leaves a wide badge) - abbreviated here,
+		// with the full status kept as a hover title so nothing's lost.
+		const abbreviations = {
+			'Admission Scheduled': 'AS',
+			'Discharge Scheduled': 'DS'
+		};
+		const label = abbreviations[status] || status || '';
+		return `<span class="${map[status] || 'badge-registered'}" title="${frappe.utils.escape_html(status || '')}">${label}</span>`;
 	}
 
 	// Tracks how many of the loads kicked off by loadAll() are still in
@@ -1004,18 +1035,49 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 
 		if (!records.length) {
 			const searched = !!admitted_patient_field.get_value();
-			container.html(`<div class="empty-state"><i class="fa fa-hospital-o"></i><h4>${searched ? __('No admitted record found for this patient') : __('No patients currently admitted')}</h4><p>${__('Patients accepted from an admission order will show up here while status is Admitted.')}</p></div>`);
+			container.html(`<div class="empty-state"><i class="fa fa-hospital-o"></i><h4>${searched ? __('No admitted record found for this patient') : __('No patients currently admitted')}</h4><p>${__('Patients accepted from an admission order show up here as soon as they\'re Admission Scheduled - assign them a bed here to admit them, then carry them through to discharge.')}</p></div>`);
 			return;
 		}
 
 		let body = '';
 		records.forEach(function(record) {
-			let actions = `<button class="btn btn-xs btn-default btn-view-inpatient" data-name="${record.name}">${__('View')}</button>`;
-			if (record.status === 'Admitted') {
-				actions += ` <button class="btn btn-xs btn-warning btn-schedule-discharge" data-name="${record.name}" data-patient="${record.patient}">${__('Schedule Discharge')}</button>`;
+			const owes = flt(record.outstanding_amount) > 0;
+			// Every action here is an icon-only button with a hover title
+			// instead of a labeled pill - five buttons' worth of text
+			// (View/Create Invoice/Schedule Discharge/Discharge/Payment
+			// Pending) made this column badly cramped once Create Invoice
+			// and the Balance column were added; the full label is still
+			// there for anyone who hovers, just not taking up row width.
+			let actions = `<button class="btn btn-xs btn-default btn-view-inpatient" data-name="${record.name}" title="${__('View')}">${frappe.utils.icon('eye', 'xs')}</button>`;
+			// Shared by both the Admitted and Discharge Scheduled branches
+			// below - disabled once has_invoice is set (an invoice already
+			// exists for this admission, paid or not - see
+			// get_admitted_patients()'s own comment on that flag) so a
+			// nurse can't fire this twice and double-bill the same charges.
+			const create_invoice_button = record.has_invoice
+				? `<button class="btn btn-xs btn-default" disabled title="${__('Already invoiced for this admission')}">${frappe.utils.icon('file-text', 'xs')}</button>`
+				: `<button class="btn btn-xs btn-info btn-create-invoice" data-name="${record.name}" data-patient-label="${frappe.utils.escape_html(record.patient_name || record.patient || '')}" title="${__('Create Invoice')}">${frappe.utils.icon('file-text', 'xs')}</button>`;
+			if (record.status === 'Admission Scheduled') {
+				actions += ` <button class="btn btn-xs btn-primary btn-admit-patient" data-name="${record.name}" title="${__('Admit')}">${frappe.utils.icon('user-check', 'xs')}</button>`;
+			} else if (record.status === 'Admitted') {
+				actions += ` ${create_invoice_button}`;
+				actions += ` <button class="btn btn-xs btn-warning btn-schedule-discharge" data-name="${record.name}" data-patient="${record.patient}" title="${__('Schedule Discharge')}">${frappe.utils.icon('calendar', 'xs')}</button>`;
 			} else if (record.status === 'Discharge Scheduled') {
-				actions += ` <button class="btn btn-xs btn-danger btn-discharge-patient" data-name="${record.name}">${__('Discharge')}</button>`;
+				actions += ` ${create_invoice_button}`;
+				if (owes) {
+					// Same balance inpatient_record.py's validate_invoice_payment()
+					// enforces server-side on Discharge - shown here up front
+					// (disabled button, no click handler bound below) so a nurse
+					// sees "still owes money" instead of clicking Discharge and
+					// getting that block back as an error.
+					actions += ` <button class="btn btn-xs btn-default" disabled title="${__('Settle the outstanding balance before this patient can be discharged')}">${frappe.utils.icon('clock', 'xs')}</button>`;
+				} else {
+					actions += ` <button class="btn btn-xs btn-danger btn-discharge-patient" data-name="${record.name}" title="${__('Discharge')}">${frappe.utils.icon('log-out', 'xs')}</button>`;
+				}
 			}
+			const balance_cell = owes
+				? `<span class="badge-owes-balance" style="cursor:pointer" title="${__('View Invoice')}" data-invoice="${record.outstanding_invoice}">${__('Owes')} ${format_currency(record.outstanding_amount, record.outstanding_currency)}</span>`
+				: '';
 			body += `
 				<tr class="admitted-row" data-name="${record.name}">
 					<td>${record.patient_name || ''}</td>
@@ -1025,6 +1087,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 					<td>${record.admission_service_unit_type || ''}</td>
 					<td>${frappe.datetime.str_to_user(record.admitted_datetime) || ''}</td>
 					<td>${record.expected_discharge || ''}</td>
+					<td class="balance-cell">${balance_cell}</td>
 					<td>${actions}</td>
 				</tr>
 			`;
@@ -1040,6 +1103,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 						<th>${__('Service Unit')}</th>
 						<th>${__('Admitted')}</th>
 						<th>${__('Expected Discharge')}</th>
+						<th>${__('Balance')}</th>
 						<th></th>
 					</tr>
 				</thead>
@@ -1047,14 +1111,52 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			</table>
 		`);
 
+		container.find('.balance-cell [data-invoice]').on('click', function() {
+			window.open(frappe.utils.get_form_link('Sales Invoice', $(this).data('invoice')), '_blank');
+		});
+
 		container.find('.btn-view-inpatient').on('click', function() {
-			// Same SPA-navigation issue Start Consultation had (see
-			// doctor_station.js/front_desk.js's start_consultation() click
-			// handler for the full writeup) - frappe.set_route() alone
-			// left the page half-rendered (generic footer, no field
-			// layout/dashboard) until a manual refresh. A real browser
-			// navigation sidesteps the SPA route/render pipeline entirely.
-			window.location.href = frappe.utils.get_form_link('Inpatient Record', $(this).data('name'));
+			openInpatientRecordDialog($(this).data('name'));
+		});
+
+		container.find('.btn-admit-patient').on('click', function() {
+			const record = records.find((r) => r.name === $(this).data('name'));
+			if (record) openAdmitPatientDialog(record);
+		});
+
+		// Mirrors inpatient_record.js's own create_inpatient_invoice(frm) -
+		// same create_sales_invoice doc method, same confirm-then-freeze
+		// flow - just reached via run_doc_method against the plain record
+		// dict this page already has, instead of a loaded frm.doc. Lets a
+		// nurse bill an admission's outstanding charges (ward stay, the
+		// encounter, any labs/procedures) without leaving Nurse Station.
+		container.find('.btn-create-invoice').on('click', function() {
+			const inpatient_record = $(this).data('name');
+			const patient_label = $(this).data('patient-label') || inpatient_record;
+			frappe.confirm(
+				__('Create a Sales Invoice for every outstanding healthcare charge for {0}?', [patient_label]),
+				function() {
+					frappe.call({
+						method: 'run_doc_method',
+						args: { dt: 'Inpatient Record', dn: inpatient_record, method: 'create_sales_invoice' },
+						freeze: true,
+						freeze_message: __('Gathering unbilled healthcare services...'),
+						callback: function(r) {
+							if (!r.exc && r.message) {
+								frappe.show_alert({
+									message: __('Sales Invoice {0} created for {1} ({2})', [
+										r.message.invoice,
+										patient_label,
+										format_currency(r.message.grand_total, r.message.currency)
+									]),
+									indicator: 'green'
+								}, 7);
+								loadAdmittedPatients();
+							}
+						}
+					});
+				}
+			);
 		});
 
 		container.find('.btn-schedule-discharge').on('click', function() {
@@ -1081,6 +1183,191 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 				}
 			);
 		});
+	}
+
+	// Same approach as Doctor Station's openEncounterDialog() - see that
+	// function's own comment for the full history of what was tried
+	// first and why: an <iframe> pointed at the record's own form URL
+	// (the same one "Open in New Tab" uses), because it's the only
+	// guaranteed-correct way to get the real form - real tabs (Details /
+	// Admission Order / Inpatient Billables / Discharge Details /
+	// Connections), real dashboard, real Save/Discharge/Create buttons -
+	// inside a popup, without reimplementing or guessing at any of
+	// Frappe's own form-rendering internals.
+	function openInpatientRecordDialog(inpatientRecordName) {
+		const dialog = new frappe.ui.Dialog({
+			title: __('Inpatient Record'),
+			size: 'extra-large',
+			secondary_action_label: __('Open in New Tab'),
+			secondary_action: function() {
+				window.open(frappe.utils.get_form_link('Inpatient Record', inpatientRecordName), '_blank');
+			}
+		});
+
+		// Same trim as Doctor Station's dialog - the iframe is doing all
+		// the real work, so this dialog's own footer bar just eats space.
+		dialog.$wrapper.find('.modal-footer').hide();
+
+		dialog.$wrapper.find('.modal-dialog').css('max-width', '95vw');
+		const $body = dialog.$wrapper.find('.modal-body');
+		$body.css({ padding: 0, height: '85vh', overflow: 'hidden' });
+		$body.html(
+			`<iframe src="${frappe.utils.get_form_link('Inpatient Record', inpatientRecordName)}" ` +
+			`style="width: 100%; height: 100%; border: 0;" title="${frappe.utils.escape_html(__('Inpatient Record'))}"></iframe>`
+		);
+
+		// Same same-origin chrome-trimming as Doctor Station's dialog -
+		// hides the iframe's own Desk sidebar/navbar so it reads as
+		// in-dialog content rather than a second app shell nested inside
+		// this one. See that function's own comment for why this is CSS
+		// (harmless if a selector doesn't match) rather than anything
+		// that could throw.
+		$body.find('iframe').on('load', function() {
+			try {
+				const idoc = this.contentDocument;
+				if (!idoc) return;
+				const style = idoc.createElement('style');
+				style.textContent = `
+					.body-sidebar-container,
+					#sidebar, .desk-sidebar, .body-sidebar, #body-sidebar,
+					.sidebar-section, .layout-side-section.desk-sidebar,
+					.navbar, #navbar {
+						display: none !important;
+					}
+					.content, .main-section, .page-container,
+					.container-fluid, .col.layout-main-section-wrapper {
+						margin-left: 0 !important;
+						padding-left: 0 !important;
+					}
+				`;
+				idoc.head.appendChild(style);
+			} catch (e) {
+				console.error('openInpatientRecordDialog: could not trim iframe chrome', e);
+			}
+		});
+
+		dialog.show();
+
+		// Nothing here can know when the nurse is actually done inside the
+		// iframe (same-origin, but its own Desk instance/router) - refresh
+		// the list whenever the dialog closes instead, same rationale as
+		// Doctor Station's dialog.onhide.
+		dialog.onhide = function() {
+			loadAdmittedPatients();
+		};
+	}
+
+	// Mirrors inpatient_record.js's own admit_patient_dialog(frm) field-
+	// for-field - same Service Unit Type/Service Unit/Currency/Price
+	// List/Admission Datetime/Expected Discharge fields and the same
+	// get_query filters - just reached via run_doc_method's generic
+	// doc-method RPC (see this file's own note on that pattern above
+	// Admission Orders' Accept/Reject) against the plain record dict
+	// get_admitted_patients() returned, rather than a loaded frm.doc.
+	// This is what turns an "Admission Scheduled" record (created the
+	// moment an Admission Order is accepted, before any bed is assigned -
+	// see get_admitted_patients()'s own docstring) into "Admitted".
+	function openAdmitPatientDialog(record) {
+		let dialog = new frappe.ui.Dialog({
+			title: __('Admit Patient - {0}', [record.patient_name || record.patient]),
+			width: 100,
+			fields: [
+				{
+					fieldtype: 'Link',
+					label: __('Service Unit Type'),
+					fieldname: 'service_unit_type',
+					options: 'Healthcare Service Unit Type',
+					default: record.admission_service_unit_type,
+					get_query: function() {
+						return { filters: { inpatient_occupancy: 1, allow_appointments: 0 } };
+					}
+				},
+				{
+					fieldtype: 'Link',
+					label: __('Service Unit'),
+					fieldname: 'service_unit',
+					options: 'Healthcare Service Unit',
+					reqd: 1,
+					get_query: function() {
+						return {
+							filters: {
+								is_group: 0,
+								company: record.company,
+								service_unit_type: dialog.get_value('service_unit_type'),
+								occupancy_status: 'Vacant'
+							}
+						};
+					}
+				},
+				{ fieldtype: 'Section Break' },
+				{ fieldtype: 'Link', label: __('Currency'), fieldname: 'currency', options: 'Currency', reqd: 1 },
+				{ fieldtype: 'Column Break' },
+				{
+					fieldtype: 'Link',
+					label: __('Price List'),
+					fieldname: 'price_list',
+					options: 'Price List',
+					reqd: 1,
+					get_query: function() {
+						return { filters: [['Price List', 'currency', '=', dialog.get_value('currency')]] };
+					}
+				},
+				{ fieldtype: 'Section Break' },
+				{
+					fieldtype: 'Datetime',
+					label: __('Admission Datetime'),
+					fieldname: 'check_in',
+					reqd: 1,
+					default: frappe.datetime.now_datetime()
+				},
+				{
+					fieldtype: 'Date',
+					label: __('Expected Discharge'),
+					fieldname: 'expected_discharge',
+					default: record.expected_length_of_stay
+						? frappe.datetime.add_days(frappe.datetime.now_datetime(), record.expected_length_of_stay)
+						: ''
+				}
+			],
+			primary_action_label: __('Admit'),
+			primary_action: function() {
+				const service_unit = dialog.get_value('service_unit');
+				const check_in = dialog.get_value('check_in');
+				if (!service_unit || !check_in) return;
+				frappe.call({
+					method: 'run_doc_method',
+					args: {
+						dt: 'Inpatient Record',
+						dn: record.name,
+						method: 'admit',
+						args: {
+							service_unit: service_unit,
+							check_in: check_in,
+							expected_discharge: dialog.get_value('expected_discharge') || null,
+							currency: dialog.get_value('currency'),
+							price_list: dialog.get_value('price_list')
+						}
+					},
+					freeze: true,
+					freeze_message: __('Processing Patient Admission'),
+					callback: function(r) {
+						if (!r.exc) {
+							dialog.hide();
+							frappe.show_alert({ message: __('Patient admitted'), indicator: 'green' }, 5);
+							loadAdmittedPatients();
+						}
+					}
+				});
+			}
+		});
+
+		frappe.db.get_value('Patient', record.patient, ['default_currency', 'default_price_list']).then((r) => {
+			const values = r.message || {};
+			dialog.set_value('currency', values.default_currency);
+			dialog.set_value('price_list', values.default_price_list);
+		});
+
+		dialog.show();
 	}
 
 	// Mirrors inpatient_record.js's own schedule_discharge(frm) dialog

@@ -52,6 +52,7 @@
   "order_specs_section",
   "quantity",
   "dosage_form",
+  "dose",
   "dosage",
   "number_of_repeats_allowed",
   "column_break_91",
@@ -252,6 +253,11 @@
    "label": "Dosage Form",
    "options": "Dosage Form",
    "reqd": 1
+  },
+  {
+   "fieldname": "dose",
+   "fieldtype": "Data",
+   "label": "Dose"
   },
   {
    "depends_on": "eval:!doc.as_needed",

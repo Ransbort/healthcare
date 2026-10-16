@@ -2400,7 +2400,7 @@ class PharmacyPOS {
 					fields: [
 						'name', 'medication', 'medication_item', 'quantity',
 						'qty_invoiced', 'total_dispensable_quantity',
-						'dosage_form', 'dosage', 'period', 'comment'
+						'dosage_form', 'dose', 'dosage', 'period', 'comment'
 					],
 					limit_page_length: 100
 				}
@@ -2474,6 +2474,7 @@ class PharmacyPOS {
 				stock_uom: med.stock_uom,
 				medication_request: med_req.name,
 				dosage_form: med_req.dosage_form || med.dosage_form,
+				dose: med_req.dose,
 				dosage: med_req.dosage,
 				period: med_req.period,
 				comment: med_req.comment,
@@ -2547,6 +2548,7 @@ class PharmacyPOS {
 				strength_uom: med.strength_uom || '',
 				medication_request: med.medication_request || '',
 				dosage_form: med.dosage_form || '',
+				dose: med.dose || '',
 				dosage: med.dosage || '',
 				period: med.period || '',
 				comment: med.comment || '',
@@ -2587,10 +2589,11 @@ class PharmacyPOS {
 			const dosage_form_html = item.dosage_form ?
 				`<span class="cart-item-tag dosage-form">📦 ${item.dosage_form}</span>` : '';
 
-			// Prescription details (dosage, period) - different from dosage_form
+			// Prescription details (dose, dosage/frequency, period) - different from dosage_form
 			let prescription_html = '';
-			if (item.dosage || item.period) {
+			if (item.dose || item.dosage || item.period) {
 				const parts = [];
+				if (item.dose) parts.push(item.dose);
 				if (item.dosage) parts.push(item.dosage);
 				if (item.period) parts.push(item.period);
 				prescription_html = `<span class="cart-item-tag prescription">📋 ${parts.join(' • ')}</span>`;

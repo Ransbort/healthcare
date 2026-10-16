@@ -269,6 +269,7 @@ class PatientEncounter(Document):
 				"intent": line_item.get("intent"),
 				"priority": line_item.get("priority"),
 				"quantity": qty,
+				"dose": line_item.get("dose"),
 				"dosage": line_item.get("dosage"),
 				"dosage_form": line_item.get("dosage_form"),
 				"period": line_item.get("period"),
@@ -280,7 +281,17 @@ class PatientEncounter(Document):
 				"note": line_item.get("note"),
 				"patient_instruction": line_item.get("patient_instruction"),
 				"insurance_policy": self.insurance_policy,
-				"comment": line_item.get("comments") or line_item.get("lab_test_comment"),
+				# Drug Prescription's own comment field is "comment" (singular) -
+				# Procedure Prescription/Lab Test Prescription use "comments"/
+				# "lab_test_comment" instead, which is why those are checked
+				# first; without this last fallback a drug's comment never made
+				# it onto the Medication Request this creates (get("comments")
+				# is always None for Drug Prescription rows), even though the
+				# Medication Request doctype and Pharmacy POS's Load
+				# Prescriptions both already read/display a "comment" field.
+				"comment": line_item.get("comments")
+				or line_item.get("lab_test_comment")
+				or line_item.get("comment"),
 			}
 		)
 

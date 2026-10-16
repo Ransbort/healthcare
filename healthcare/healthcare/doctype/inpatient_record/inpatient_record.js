@@ -169,6 +169,16 @@ frappe.ui.form.on("Inpatient Record", {
 			},
 			__("Create"),
 		);
+
+		if (!["Discharged", "Cancelled"].includes(frm.doc.status)) {
+			frm.add_custom_button(
+				__("Sales Invoice"),
+				function () {
+					create_inpatient_invoice(frm);
+				},
+				__("Create"),
+			);
+		}
 	},
 
 	onload: function (frm) {
@@ -199,6 +209,41 @@ let discharge_patient = function (frm) {
 		freeze: true,
 		freeze_message: __("Processing Inpatient Discharge"),
 	});
+};
+
+let create_inpatient_invoice = function (frm) {
+	frappe.confirm(
+		__("Create a Sales Invoice for every outstanding healthcare charge for {0}?", [
+			frm.doc.patient_name || frm.doc.patient,
+		]),
+		function () {
+			frappe.call({
+				doc: frm.doc,
+				method: "create_sales_invoice",
+				callback: function (data) {
+					if (!data.exc && data.message) {
+						frappe.show_alert(
+							{
+								message: __("Sales Invoice {0} created for {1}", [
+									data.message.invoice,
+									frappe.utils.fmt_money(
+										data.message.grand_total,
+										null,
+										data.message.currency,
+									),
+								]),
+								indicator: "green",
+							},
+							7,
+						);
+						frappe.set_route("Form", "Sales Invoice", data.message.invoice);
+					}
+				},
+				freeze: true,
+				freeze_message: __("Gathering unbilled healthcare services..."),
+			});
+		},
+	);
 };
 
 let admit_patient_dialog = function (frm) {

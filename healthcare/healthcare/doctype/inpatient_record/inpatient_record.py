@@ -31,6 +31,9 @@ from healthcare.healthcare.doctype.patient_insurance_coverage.patient_insurance_
 )
 from healthcare.healthcare.utils import (
 	get_appointment_billing_item_and_rate,
+	get_encounters_to_invoice,
+	get_inpatient_services_to_invoice,
+	get_service_requests_to_invoice,
 	validate_nursing_tasks,
 )
 
@@ -124,6 +127,16 @@ class InpatientRecord(Document):
 	@frappe.whitelist()
 	def discharge(self):
 		discharge_patient(self)
+
+	@frappe.whitelist()
+	def create_sales_invoice(self):
+		return create_invoice_for_inpatient(self)
+
+	@frappe.whitelist()
+	def preview_sales_invoice(self):
+		"""Read-only: what create_sales_invoice would bill right now, itemised,
+		without creating anything - see preview_invoice_items() below."""
+		return preview_invoice_items(self)
 
 	@frappe.whitelist()
 	def transfer(self, service_unit, check_in, leave_from=None, txred=0):
@@ -453,6 +466,8 @@ def discharge_patient(inpatient_record):
 
 	validate_inpatient_invoicing(inpatient_record)
 
+	validate_invoice_payment(inpatient_record)
+
 	validate_incomplete_service_requests(inpatient_record)
 
 	check_out_inpatient(inpatient_record)
@@ -579,6 +594,374 @@ def get_unbilled_inpatient_docs(doc, inpatient_record):
 			}
 		)
 	return frappe.db.get_list(doc, filters=filters)
+
+
+def get_inpatient_invoices(inpatient_record, only_outstanding=False):
+	"""Submitted Sales Invoices that cover THIS specific admission -
+	identified by carrying a line whose reference_dn is one of this
+	Inpatient Record's own Inpatient Record Item or Inpatient Occupancy
+	child rows (the same two reference types create_invoice_for_inpatient()
+	tags when it bills this admission).
+
+	Deliberately scoped to this admission, not just "this patient" - an
+	older, already-settled admission's invoice (or a brand new one for a
+	readmission) shouldn't count against this one, whether that's
+	validate_invoice_payment() below deciding what blocks discharge, or
+	the Nurse Station deciding what balance/invoiced-state to show for
+	this row (see get_admitted_patients() in nurse_station.py, the other
+	caller of this function).
+
+	With only_outstanding=False (the default) this includes fully-paid
+	invoices too - used to tell whether this admission has EVER been
+	invoiced, not just whether something's still owed, so a "Create
+	Invoice" action can disable itself once billing's already been done
+	rather than risk creating a second, duplicate invoice for the same
+	charges. Pass only_outstanding=True for the payment-still-owed
+	question instead (see get_unpaid_inpatient_invoices below).
+
+	Takes either a loaded Inpatient Record doc or just its name - the
+	Nurse Station's Admitted Patients list calls this once per row from
+	a plain record dict, so it only has the name on hand.
+	"""
+	inpatient_record_name = (
+		inpatient_record if isinstance(inpatient_record, str) else inpatient_record.name
+	)
+
+	reference_names = frappe.get_all(
+		"Inpatient Record Item", filters={"parent": inpatient_record_name}, pluck="name"
+	)
+	reference_names += frappe.get_all(
+		"Inpatient Occupancy", filters={"parent": inpatient_record_name}, pluck="name"
+	)
+	if not reference_names:
+		return []
+
+	sii = frappe.qb.DocType("Sales Invoice Item")
+	si = frappe.qb.DocType("Sales Invoice")
+
+	query = (
+		frappe.qb.from_(si)
+		.join(sii)
+		.on(sii.parent == si.name)
+		.select(si.name)
+		.where((si.docstatus == 1) & (sii.reference_dn.isin(reference_names)))
+		.distinct()
+	)
+	if only_outstanding:
+		query = query.where(si.outstanding_amount > 0)
+
+	invoice_names = [row[0] for row in query.run()]
+	if not invoice_names:
+		return []
+
+	return frappe.get_all(
+		"Sales Invoice",
+		filters={"name": ["in", invoice_names]},
+		fields=["name", "outstanding_amount", "currency", "grand_total"],
+		order_by="posting_date asc",
+	)
+
+
+def get_unpaid_inpatient_invoices(inpatient_record):
+	"""Just this admission's invoices that still have money owed on them -
+	see get_inpatient_invoices() above for the full picture (this is a
+	thin, only_outstanding=True wrapper over it). Used by
+	validate_invoice_payment() below to decide what blocks discharge."""
+	return get_inpatient_invoices(inpatient_record, only_outstanding=True)
+
+
+def validate_invoice_payment(inpatient_record):
+	"""Cannot discharge while money is still owed on this admission's own
+	Sales Invoice(s). Being billed (validate_inpatient_invoicing above)
+	is a different thing from being paid - that check only cares whether
+	a Sales Invoice was ever raised, not whether it was settled - so a
+	hospital that wants payment collected before the bed is released
+	needs this checked separately, after invoicing but before the
+	"Incomplete Services" check.
+
+	Unlike validate_inpatient_invoicing, there's deliberately no
+	Healthcare Settings escape hatch here - this is a hard stop every
+	time, since it was asked for as an unconditional rule ("once paid,
+	before patient can be discharged"), not a configurable one.
+	"""
+	unpaid = get_unpaid_inpatient_invoices(inpatient_record)
+	if not unpaid:
+		return
+
+	rows = "".join(
+		f"""<tr>
+			<td>{get_link_to_form("Sales Invoice", inv.name)}</td>
+			<td style="text-align:right">{frappe.utils.fmt_money(inv.outstanding_amount, currency=inv.currency)}</td>
+		</tr>"""
+		for inv in unpaid
+	)
+	message = _(
+		"Cannot discharge - the following invoice(s) for this admission still have an outstanding balance. "
+		"Payment must be collected (see the Cashier's Inpatient Billing tab) before discharge."
+	)
+	message += f"""
+		<table class='table'>
+			<thead>
+				<th>{_("Invoice")}</th>
+				<th>{_("Outstanding")}</th>
+			</thead>
+			{rows}
+		</table>
+	"""
+	frappe.throw(message, title=_("Payment Pending"), is_minimizable=True, wide=True)
+
+
+def _get_inpatient_consulting_charges(patient, company, inpatient_record):
+	"""Just this admission's own slice of what get_encounters_to_invoice()
+	would bill - the Inpatient/Consulting Visit Charge for a not-yet-
+	invoiced, submitted Patient Encounter tied to THIS Inpatient Record.
+
+	Uses the Patient Encounter doctype's own existing inpatient_record
+	Link field to tell "this encounter happened during this admission"
+	from "this was an ordinary walk-in encounter" - no new field needed:
+	patient_encounter.js's set_patient_info() already auto-fills this the
+	moment a currently-admitted patient is selected on any encounter, so
+	a genuine walk-in (patient not currently admitted) always leaves it
+	blank, and every encounter taken during this stay always has it set
+	to this Inpatient Record.
+
+	Reuses get_encounters_to_invoice()'s own logic (insurance coverage,
+	the appointment-linked skip, the "do_not_bill_inpatient_encounters"
+	Healthcare Settings check, get_appointment_billing_item_and_rate() for
+	the actual rate) rather than duplicating it - just filters its result
+	down to encounters that belong to this admission. That function on
+	its own is patient-wide: it bills EVERY unbilled encounter the
+	patient has, inpatient or outpatient, which is exactly what pulled
+	unrelated charges into an admission invoice before this split.
+	"""
+	this_admissions_encounters = set(
+		frappe.get_all(
+			"Patient Encounter",
+			filters={"inpatient_record": inpatient_record.name, "invoiced": 0, "docstatus": 1},
+			pluck="name",
+		)
+	)
+	if not this_admissions_encounters:
+		return []
+
+	return [
+		entry
+		for entry in (get_encounters_to_invoice(patient, company) or [])
+		if entry.get("reference_name") in this_admissions_encounters
+	]
+
+
+def _get_inpatient_service_unit_charges(patient, company, inpatient_record):
+	"""Just this admission's own Service Unit (ward) occupancy charges,
+	plus any other un-invoiced row already sitting in this Inpatient
+	Record's own Inpatient Billables table - reuses
+	get_inpatient_services_to_invoice()'s own logic (it already respects
+	Healthcare Settings > "Automatically Generate Billable") but filters
+	its result down to occupancy/item rows that belong to THIS Inpatient
+	Record specifically (its own inpatient_occupancies/items child
+	tables), not just any admission this patient's ever had - that
+	function on its own only scopes by patient, not by admission.
+	"""
+	this_admissions_occupancy_names = {row.name for row in inpatient_record.inpatient_occupancies}
+	this_admissions_item_names = {row.name for row in inpatient_record.items}
+
+	charges = []
+	for entry in get_inpatient_services_to_invoice(patient, company) or []:
+		reference_type = entry.get("reference_type")
+		reference_name = entry.get("reference_name")
+		if reference_type == "Inpatient Occupancy" and reference_name in this_admissions_occupancy_names:
+			charges.append(entry)
+		elif reference_type == "Inpatient Record Item" and reference_name in this_admissions_item_names:
+			charges.append(entry)
+	return charges
+
+
+def _get_inpatient_lab_charges(patient, company, inpatient_record):
+	"""Just this admission's own lab orders - deliberately NOT every lab
+	the patient's ever had ordered through any encounter (that's what
+	get_lab_tests_to_invoice()/the old get_healthcare_services_to_invoice()
+	swept in before).
+
+	A lab order is "this admission's" if its Service Request's order_group
+	is either this Inpatient Record itself (labs ordered straight onto the
+	admission - e.g. create_orders_from_treatment_counselling() at Admit
+	time) or one of THIS admission's own encounters (the same
+	inpatient_record-tagged encounters _get_inpatient_consulting_charges()
+	above uses - not every encounter the patient has ever had). No new
+	field needed: order_group + the encounter's existing inpatient_record
+	link are enough to tell "ordered during this stay" from "ordered on
+	some other visit".
+
+	Reuses get_service_requests_to_invoice()'s own billing/insurance logic
+	rather than duplicating it - just filters its result down to Service
+	Requests against a Lab Test Template that belong to this admission.
+	"""
+	this_admissions_encounters = frappe.get_all(
+		"Patient Encounter",
+		filters={"inpatient_record": inpatient_record.name},
+		pluck="name",
+	)
+	eligible_order_groups = set(this_admissions_encounters) | {inpatient_record.name}
+
+	this_admissions_lab_requests = set(
+		frappe.get_all(
+			"Service Request",
+			filters={
+				"order_group": ["in", list(eligible_order_groups)],
+				"template_dt": "Lab Test Template",
+				"billing_status": ["!=", "Invoiced"],
+				"docstatus": 1,
+			},
+			pluck="name",
+		)
+	)
+	if not this_admissions_lab_requests:
+		return []
+
+	return [
+		entry
+		for entry in (get_service_requests_to_invoice(patient, company) or [])
+		if entry.get("reference_type") == "Service Request"
+		and entry.get("reference_name") in this_admissions_lab_requests
+	]
+
+
+def _build_unsaved_inpatient_invoice(inpatient_record):
+	"""Build (but never insert or submit) an in-memory Sales Invoice covering
+	just three things for THIS specific admission: the Inpatient Consulting
+	(Visit) Charge for its own encounter(s), its own Service Unit (ward)
+	occupancy charges, and its own lab orders - see
+	_get_inpatient_consulting_charges(), _get_inpatient_service_unit_charges()
+	and _get_inpatient_lab_charges() above.
+
+	Shared by create_invoice_for_inpatient() (which inserts and submits this)
+	and preview_invoice_items() (which reads it back without saving anything)
+	so the itemised breakdown a nurse is shown before confirming is built by
+	the identical code path that then actually bills it - never two separate
+	calculations that could drift apart.
+
+	Deliberately narrow, and this was NOT always the case: this used to
+	call get_healthcare_services_to_invoice(), which bills every
+	outstanding healthcare charge for the PATIENT - any appointment, any
+	encounter (inpatient or not), any lab the patient's ever had ordered
+	through any encounter, clinical procedures, therapy, any other
+	Service Request. That's what silently swept in unrelated
+	encounter-ordered lab tests (and, worse, auto-created real Lab Test
+	records for them - see manage_invoice_submit_cancel() in
+	healthcare/utils.py) the moment an admission invoice was created.
+	Anything outside these three - other encounters, appointments,
+	procedures, therapy, lab orders placed on a different visit, unrelated
+	Service Requests - is billed through its own normal flow (Lab Portal,
+	the standard Sales Invoice "Get Items From > Healthcare Services"
+	dialog, etc.), never swept in by this one-click admission action.
+	"""
+	patient = frappe.get_doc("Patient", inpatient_record.patient)
+	if not patient.customer:
+		frappe.throw(
+			_("Patient {0} is not linked to a Customer - link one before an invoice can be created").format(
+				patient.patient_name
+			)
+		)
+
+	# Mirrors what "Schedule Discharge" already triggers via
+	# generate_billables() - make sure today's ward rent is reflected in
+	# the Inpatient Billables table before pulling the invoice list, so a
+	# preview (or an actual "Sales Invoice" click) taken any time during
+	# the stay bills/shows the right amount rather than whatever ward
+	# rent was last saved. Note this does write - it saves the Inpatient
+	# Record's own Inpatient Billables table - even when only previewing;
+	# that's the same refresh create_invoice_for_inpatient() already did
+	# unconditionally before this was split out, so a preview's total
+	# matches what actually gets billed a moment later.
+	inpatient_record.add_service_unit_rent_to_billable_items()
+
+	items_to_invoice = []
+	items_to_invoice += _get_inpatient_consulting_charges(patient, inpatient_record.company, inpatient_record)
+	items_to_invoice += _get_inpatient_service_unit_charges(patient, inpatient_record.company, inpatient_record)
+	items_to_invoice += _get_inpatient_lab_charges(patient, inpatient_record.company, inpatient_record)
+
+	si = frappe.new_doc("Sales Invoice")
+	si.patient = patient.name
+	si.customer = patient.customer
+	si.company = inpatient_record.company
+	si.due_date = today()
+
+	for entry in items_to_invoice:
+		if not entry.get("service"):
+			# A couple of aggregators (e.g. a Patient Encounter with no
+			# practitioner charge configured) can surface a row with no
+			# billable item at all - skip it rather than let it fail
+			# set_missing_values()/insert() with a blank item_code.
+			continue
+		row = si.append("items", {})
+		row.item_code = entry.get("service")
+		row.qty = flt(entry.get("qty") or 1)
+		row.reference_dt = entry.get("reference_type")
+		row.reference_dn = entry.get("reference_name")
+		if entry.get("rate"):
+			row.rate = flt(entry.get("rate"))
+		if entry.get("discount_percentage"):
+			row.discount_percentage = flt(entry.get("discount_percentage"))
+		if entry.get("income_account"):
+			row.income_account = entry.get("income_account")
+		if entry.get("insurance_coverage"):
+			row.insurance_coverage = entry.get("insurance_coverage")
+			row.insurance_payor = entry.get("insurance_payor")
+			row.patient_insurance_policy = entry.get("patient_insurance_policy")
+
+	if not si.items:
+		frappe.throw(_("Nothing outstanding to invoice for {0}").format(patient.patient_name))
+
+	si.set_missing_values()
+	si.calculate_taxes_and_totals()
+	return si
+
+
+def create_invoice_for_inpatient(inpatient_record):
+	"""Bill everything currently unbilled for this admission's patient into
+	one submitted Sales Invoice - see _build_unsaved_inpatient_invoice()
+	above for how the line items are put together.
+
+	Exposed as a one-click "Sales Invoice" action from this doctype's
+	Create menu (and the Nurse Station's Admitted Patients tab, which
+	shows preview_invoice_items()'s breakdown first) so a nurse or
+	front-desk user doesn't have to open a blank Sales Invoice and drive
+	that dialog by hand before a patient can pay towards discharge.
+	"""
+	si = _build_unsaved_inpatient_invoice(inpatient_record)
+	si.insert(ignore_permissions=True)
+	si.submit()
+
+	return {"invoice": si.name, "grand_total": si.grand_total, "currency": si.currency}
+
+
+def preview_invoice_items(inpatient_record):
+	"""Read-only itemised preview of exactly what create_invoice_for_inpatient()
+	would bill right now - same builder, minus insert()/submit(), so a nurse
+	or front-desk user can see the actual services, quantities, rates and
+	total before committing to creating the invoice, instead of a bare
+	yes/no confirm. Nothing here is inserted or submitted to the database
+	(add_service_unit_rent_to_billable_items() still saves the Inpatient
+	Record's own billables table - see that function's docstring above).
+	"""
+	si = _build_unsaved_inpatient_invoice(inpatient_record)
+	return {
+		"currency": si.currency,
+		"grand_total": si.grand_total,
+		"items": [
+			{
+				"item_code": row.item_code,
+				"item_name": row.item_name,
+				"qty": row.qty,
+				"uom": row.uom,
+				"rate": row.rate,
+				"amount": row.amount,
+				"reference_dt": row.reference_dt,
+				"reference_dn": row.reference_dn,
+			}
+			for row in si.items
+		],
+	}
 
 
 def admit_patient(
@@ -924,6 +1307,7 @@ def get_order_details(doc, template_doc, line_item, ip_name, medication_request=
 			"intent": line_item.get("intent"),
 			"priority": line_item.get("priority"),
 			"quantity": line_item.get_quantity() if line_item.get("doctype") == "Drug Prescription" else 1,
+			"dose": line_item.get("dose"),
 			"dosage": line_item.get("dosage"),
 			"dosage_form": line_item.get("dosage_form"),
 			"period": line_item.get("period"),
@@ -934,6 +1318,15 @@ def get_order_details(doc, template_doc, line_item, ip_name, medication_request=
 			"patient_instruction": line_item.get("patient_instruction"),
 			"medical_code": template_doc.get("medical_code"),
 			"medical_code_standard": template_doc.get("medical_code_standard"),
+			# Same gap as patient_encounter.py's get_order_details(): Drug
+			# Prescription's own comment field is "comment" (singular), not
+			# "comments"/"lab_test_comment" (those belong to Procedure/Lab
+			# Test Prescription) - without this a drug ordered at admission
+			# time via Treatment Counselling never carried its comment onto
+			# the Medication Request this creates.
+			"comment": line_item.get("comments")
+			or line_item.get("lab_test_comment")
+			or line_item.get("comment"),
 		}
 	)
 

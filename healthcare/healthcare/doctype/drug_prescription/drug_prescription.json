@@ -15,6 +15,7 @@
   "dosage_form",
   "column_break_7",
   "dosage_by_interval",
+  "dose",
   "dosage",
   "interval",
   "interval_uom",
@@ -52,9 +53,10 @@
    "fieldname": "dosage",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Dosage",
+   "label": "Frequency",
    "mandatory_depends_on": "eval:!doc.dosage_by_interval",
-   "options": "Prescription Dosage"
+   "options": "Prescription Dosage",
+   "reqd": 1
   },
   {
    "fetch_from": "medication.default_prescription_duration",
@@ -64,8 +66,7 @@
    "ignore_user_permissions": 1,
    "in_list_view": 1,
    "label": "Period",
-   "options": "Prescription Duration",
-   "reqd": 1
+   "options": "Prescription Duration"
   },
   {
    "fetch_from": "medication.dosage_form",
@@ -180,11 +181,17 @@
    "label": "Medication Request",
    "no_copy": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "dose",
+   "fieldtype": "Data",
+   "label": "Dose",
+   "reqd": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2025-12-25 09:36:45.375308",
+ "modified": "2026-10-16 08:30:36.307138",
  "modified_by": "Administrator",
  "module": "Healthcare",
  "name": "Drug Prescription",

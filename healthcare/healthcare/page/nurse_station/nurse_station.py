@@ -1,10 +1,13 @@
 import frappe
 from frappe import _
-from frappe.utils import nowdate, nowtime
+from frappe.utils import flt, nowdate, nowtime
 
 from healthcare.healthcare.page.front_desk.front_desk import (
 	_attach_latest_vitals,
 	_resolve_patient_full_names,
+)
+from healthcare.healthcare.doctype.inpatient_record.inpatient_record import (
+	get_inpatient_invoices,
 )
 
 # =============================================
@@ -304,25 +307,35 @@ def get_pending_admission_orders():
 
 @frappe.whitelist()
 def get_admitted_patients(patient=None):
-	"""Currently admitted or discharge-in-progress patients (Inpatient
-	Record.status in "Admitted"/"Discharge Scheduled"), optionally narrowed
-	to one patient - backs the Admitted Patients tab's search, so a nurse
-	can look up where an inpatient is, who's treating them, and carry the
-	admission through to actual discharge without leaving this page.
+	"""Admission-scheduled, currently admitted, or discharge-in-progress
+	patients (Inpatient Record.status in "Admission Scheduled"/"Admitted"/
+	"Discharge Scheduled"), optionally narrowed to one patient - backs the
+	Admitted Patients tab's search, so a nurse can look up where an
+	inpatient is, who's treating them, and carry them all the way from an
+	accepted Admission Order through to actual discharge without leaving
+	this page.
 
-	Includes "Discharge Scheduled" alongside "Admitted" (not just the
-	latter, as this used to be scoped) precisely so a patient doesn't drop
-	out of this list the moment a practitioner schedules their discharge -
-	that's exactly the point where the final Discharge action (see
-	inpatient_record.py's discharge()/validate_incomplete_service_requests())
-	becomes available, and a nurse needs to still be able to find them here
-	to run it. Deliberately excludes Admission Scheduled/Discharged/
-	Cancelled - this is a "who's here or being discharged right now"
-	lookup, not a full inpatient history.
+	Includes "Admission Scheduled" (alongside "Admitted"/"Discharge
+	Scheduled") precisely so a patient doesn't disappear the moment
+	Admission Orders' own Accept button creates their Inpatient Record -
+	accept_admission_order() only gets them as far as "Admission
+	Scheduled" (see admission_order.py/inpatient_record.create_inpatient_record());
+	an actual bed still has to be assigned via the Admit action below
+	before they're "Admitted", and a nurse needs to be able to find them
+	here to do that, not have to go find the Inpatient Record form by
+	hand. Likewise keeps "Discharge Scheduled" in view (not just
+	"Admitted") so a patient doesn't drop out the moment a practitioner
+	schedules their discharge - that's exactly the point where the final
+	Discharge action (see inpatient_record.py's discharge()/
+	validate_incomplete_service_requests()) becomes available, and a
+	nurse needs to still be able to find them here to run it.
+	Deliberately excludes Discharged/Cancelled - this is a "who still
+	needs something done for their admission" lookup, not a full
+	inpatient history.
 	"""
 	_require_nurse_access()
 
-	filters = {"status": ["in", ["Admitted", "Discharge Scheduled"]]}
+	filters = {"status": ["in", ["Admission Scheduled", "Admitted", "Discharge Scheduled"]]}
 	if patient:
 		filters["patient"] = patient
 
@@ -334,11 +347,13 @@ def get_admitted_patients(patient=None):
 			"patient",
 			"patient_name",
 			"status",
+			"company",
 			"medical_department",
 			"primary_practitioner",
 			"secondary_practitioner",
 			"admitted_datetime",
 			"expected_discharge",
+			"expected_length_of_stay",
 			"admission_service_unit_type",
 		],
 		order_by="admitted_datetime desc",
@@ -357,6 +372,30 @@ def get_admitted_patients(patient=None):
 		record["secondary_practitioner_name"] = (
 			practitioner_names.get(record.get("secondary_practitioner")) or record.get("secondary_practitioner")
 		)
+
+		# Surfaces the same balance validate_invoice_payment() in
+		# inpatient_record.py enforces at Discharge time, so a nurse can see
+		# a patient still owes money before clicking Discharge and hitting
+		# that block, not just after. An "Admission Scheduled" record has
+		# no billable items yet, so this is always empty for those - the
+		# per-row query cost is fine at Nurse Station's scale (a handful of
+		# current admissions, not a full patient history).
+		#
+		# Also drives whether the "Create Invoice" button shows enabled -
+		# has_invoice (any invoice, paid or not) is a broader check than
+		# "unpaid" below, precisely so a fully-settled admission still
+		# disables the button rather than risk billing the same charges
+		# twice. See create_invoice_for_inpatient()'s own guard for the
+		# case this doesn't cover: new charges added to an admission
+		# *after* its first invoice still need billing through the
+		# standard Sales Invoice > Get Items From > Healthcare Services
+		# flow, since this button stays disabled once has_invoice is set.
+		invoices = get_inpatient_invoices(record["name"])
+		unpaid = [inv for inv in invoices if flt(inv.outstanding_amount) > 0]
+		record["has_invoice"] = bool(invoices)
+		record["outstanding_amount"] = sum(flt(inv.outstanding_amount) for inv in unpaid)
+		record["outstanding_invoice"] = unpaid[0].name if unpaid else None
+		record["outstanding_currency"] = unpaid[0].currency if unpaid else None
 
 	return records
 

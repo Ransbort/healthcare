@@ -430,6 +430,11 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
                 color: #4a148c;
             }
 
+            .badge-inpatient {
+                background: #e0f7fa;
+                color: #006064;
+            }
+
             .btn-pay {
                 padding: 6px 16px;
                 font-size: 0.85rem;
@@ -693,6 +698,10 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
                             <i class="fa fa-heartbeat"></i> Rehabilitation
                             <span class="badge badge-info" id="rehabilitation-invoices-count">0</span>
                         </button>
+                        <button class="tab-button" data-tab="inpatient-invoices">
+                            <i class="fa fa-bed"></i> Inpatient
+                            <span class="badge badge-info" id="inpatient-invoices-count">0</span>
+                        </button>
                         <button class="tab-button" data-tab="payments">
                             <i class="fa fa-money"></i> Payment History
                             <span class="badge badge-secondary" id="payments-count">0</span>
@@ -724,6 +733,11 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
                 <!-- Rehabilitation Invoices Tab -->
                 <div class="tab-content" id="rehabilitation-invoices-tab">
                     <div id="rehabilitation-invoices-container"></div>
+                </div>
+
+                <!-- Inpatient Invoices Tab -->
+                <div class="tab-content" id="inpatient-invoices-tab">
+                    <div id="inpatient-invoices-container"></div>
                 </div>
 
                 <!-- Payments Tab -->
@@ -1154,6 +1168,7 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
                     displayPharmacyInvoices(r.message.pharmacy_orders, page);
                     displayLaboratoryInvoices(r.message.laboratory_invoices, page);
                     displayRehabilitationInvoices(r.message.rehabilitation_invoices, page);
+                    displayInpatientInvoices(r.message.inpatient_invoices, page);
                     allPayments = r.message.payments;
                     filterAndDisplayPayments();
                     page.main.find('.details-section').slideDown();
@@ -1198,6 +1213,7 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
                     displayPharmacyInvoices(r.message.pharmacy_orders, page);
                     displayLaboratoryInvoices(r.message.laboratory_invoices, page);
                     displayRehabilitationInvoices(r.message.rehabilitation_invoices, page);
+                    displayInpatientInvoices(r.message.inpatient_invoices, page);
                     allPayments = r.message.payments;
                     filterAndDisplayPayments();
                     page.main.find('.details-section').slideDown();
@@ -1436,6 +1452,33 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
 
         invoices.forEach(function(invoice) {
             const card = createDepartmentInvoiceCardFromInvoice(invoice, 'Rehabilitation', 'badge-rehabilitation', page);
+            container.append(card);
+        });
+    }
+
+    // Helper function to display inpatient invoices (sales invoices) -
+    // these are identified server-side by their line items' reference_dt
+    // (Inpatient Record Item / Inpatient Occupancy), not custom_department,
+    // but render exactly like Laboratory/Rehabilitation once fetched.
+    function displayInpatientInvoices(invoices, page) {
+        const container = page.main.find('#inpatient-invoices-container');
+        container.empty();
+
+        page.main.find('#inpatient-invoices-count').text(invoices.length);
+
+        if (invoices.length === 0) {
+            container.html(`
+                <div class="empty-state success">
+                    <i class="fa fa-bed"></i>
+                    <h5>No Inpatient Invoices</h5>
+                    <p>No outstanding inpatient invoices found.</p>
+                </div>
+            `);
+            return;
+        }
+
+        invoices.forEach(function(invoice) {
+            const card = createDepartmentInvoiceCardFromInvoice(invoice, 'Inpatient', 'badge-inpatient', page);
             container.append(card);
         });
     }
@@ -1959,11 +2002,16 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
                                 <i class="fa fa-heartbeat"></i> Rehabilitation
                                 <span class="badge badge-info" id="pending-rehabilitation-count">0</span>
                             </button>
+                            <button class="tab-button" data-pending-tab="inpatient">
+                                <i class="fa fa-bed"></i> Inpatient
+                                <span class="badge badge-info" id="pending-inpatient-count">0</span>
+                            </button>
                         </div>
                         <div class="tab-content active" id="pending-other-tab"><div id="pending-other-container"></div></div>
                         <div class="tab-content" id="pending-pharmacy-tab"><div id="pending-pharmacy-container"></div></div>
                         <div class="tab-content" id="pending-laboratory-tab"><div id="pending-laboratory-container"></div></div>
                         <div class="tab-content" id="pending-rehabilitation-tab"><div id="pending-rehabilitation-container"></div></div>
+                        <div class="tab-content" id="pending-inpatient-tab"><div id="pending-inpatient-container"></div></div>
                     `
                 }
             ],
@@ -1999,6 +2047,7 @@ frappe.pages['cashier-portal'].on_page_load = function(wrapper) {
                 renderPendingBucket(dialog, 'other', r.message.other_invoices, 'invoice');
                 renderPendingBucket(dialog, 'laboratory', r.message.laboratory_invoices, 'invoice');
                 renderPendingBucket(dialog, 'rehabilitation', r.message.rehabilitation_invoices, 'invoice');
+                renderPendingBucket(dialog, 'inpatient', r.message.inpatient_invoices, 'invoice');
                 renderPendingBucket(dialog, 'pharmacy', r.message.pharmacy_orders, 'pharmacy_order');
             }
         });
