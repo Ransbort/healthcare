@@ -43,11 +43,13 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, now_datetime, nowdate, nowtime, today
 
-from healthcare.healthcare.page.front_desk.front_desk import (
-	_patient_and_practitioner_names,
-	_resolve_duration,
-	get_default_appointment_type,
-)
+# front_desk.py imports create_lab_request from this module at its own
+# module level - importing front_desk.py back at THIS module's top level
+# would be a circular import (whichever of the two loads first finds the
+# other only partially initialized). Deferred into
+# send_lab_result_to_doctor() itself below instead, the only place these
+# are used, which is enough to break the cycle: by the time that function
+# actually runs, both modules have finished loading.
 
 
 def _notify(event, payload):
@@ -605,6 +607,14 @@ def send_lab_result_to_doctor(lab_test_name, practitioner):
 	already shows the result - draft or submitted, it doesn't check
 	docstatus.
 	"""
+	# Deferred import - see the note by this module's own imports at the
+	# top of the file for why this can't sit up there with the rest.
+	from healthcare.healthcare.page.front_desk.front_desk import (
+		_patient_and_practitioner_names,
+		_resolve_duration,
+		get_default_appointment_type,
+	)
+
 	if not practitioner:
 		frappe.throw(_("Choose a practitioner to send this result to."))
 
