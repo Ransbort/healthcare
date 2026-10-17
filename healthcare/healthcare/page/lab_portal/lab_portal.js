@@ -124,6 +124,25 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 font-size: 0.95rem;
             }
 
+            .lp-icon {
+                display: inline-block;
+                font-style: normal;
+            }
+
+            /* Stand-in for Font Awesome's fa-spin (that stylesheet/font
+               isn't loading in this environment - see the toolbar icons
+               above, which were plain invisible boxes before this). One
+               full turn, not infinite - the refresh click handler removes
+               this class again after 600ms, matching this duration. */
+            @keyframes lp-icon-spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+
+            .lp-icon.lp-spin {
+                animation: lp-icon-spin 0.6s linear;
+            }
+
             .btn-icon:hover {
                 background: #f8f9fa;
                 border-color: var(--primary-color);
@@ -644,7 +663,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             <div class="sticky-header">
                 <div class="lab-toolbar">
                     <div class="lab-toolbar-title">
-                        <div class="icon-badge"><i class="fa fa-flask"></i></div>
+                        <div class="icon-badge">🧪</div>
                         <div>
                             <h4>Laboratory Portal</h4>
                             <div class="lab-toolbar-subtitle">Search and manage lab requests</div>
@@ -652,10 +671,10 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                     </div>
                     <div class="lab-toolbar-actions">
                         <button class="btn-icon" id="refresh-btn" title="Refresh">
-                            <i class="fa fa-refresh"></i>
+                            <i class="lp-icon">🔄</i>
                         </button>
                         <button class="btn-new-request" id="new-lab-request-btn">
-                            <i class="fa fa-plus"></i> New Lab Request
+                            ➕ New Lab Request
                         </button>
                     </div>
                 </div>
@@ -666,41 +685,41 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                         <div class="frappe-control" data-fieldname="search_date"></div>
                         <div class="frappe-control" data-fieldname="search_encounter"></div>
                         <button class="btn btn-primary" id="search-btn">
-                            <i class="fa fa-search"></i> Search
+                            🔍 Search
                         </button>
                         <button class="btn" id="clear-btn">
                             Clear
                         </button>
                     </div>
                     <div class="last-updated">
-                        <i class="fa fa-clock-o"></i>
+                        🕐
                         <span id="last-updated-time">Not loaded yet</span>
                     </div>
                 </div>
 
                 <div class="tabs-section">
                     <button class="tab-btn active" data-tab="requested">
-                        <i class="fa fa-paper-plane"></i> Requested Labs
+                        📤 Requested Labs
                         <span class="badge badge-info" id="requested-count">0</span>
                     </button>
                     <button class="tab-btn" data-tab="pending">
-                        <i class="fa fa-clock-o"></i> Pending Labs
+                        ⏳ Pending Labs
                         <span class="badge badge-warning" id="pending-count">0</span>
                     </button>
                     <button class="tab-btn" data-tab="completed">
-                        <i class="fa fa-check-circle"></i> Completed Labs
+                        ✅ Completed Labs
                         <span class="badge badge-success" id="completed-count">0</span>
                     </button>
                     <button class="tab-btn" data-tab="trial">
-                        <i class="fa fa-flask"></i> Trial Labs
+                        🧪 Trial Labs
                         <span class="badge badge-warning" id="trial-count">0</span>
                     </button>
                     <div class="view-toggle-group">
                         <button class="view-toggle-btn active" data-view="card" title="Card View">
-                            <i class="fa fa-th-large"></i>
+                            ▦
                         </button>
                         <button class="view-toggle-btn" data-view="list" title="List View">
-                            <i class="fa fa-list"></i>
+                            ☰
                         </button>
                     </div>
                 </div>
@@ -725,7 +744,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                     <div class="frappe-control" data-fieldname="completed_date"></div>
                     <div class="frappe-control" data-fieldname="completed_to_date"></div>
                     <button class="btn btn-primary" id="filter-completed-btn">
-                        <i class="fa fa-filter"></i> Filter
+                        🔽 Filter
                     </button>
                 </div>
                 <div class="scrollable-content">
@@ -750,7 +769,7 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                     <div class="frappe-control" data-fieldname="trial_date"></div>
                     <div class="frappe-control" data-fieldname="trial_to_date"></div>
                     <button class="btn btn-primary" id="filter-trial-btn">
-                        <i class="fa fa-filter"></i> Filter
+                        🔽 Filter
                     </button>
                 </div>
                 <div class="scrollable-content">
@@ -964,9 +983,14 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
     // spin for feedback (distinct from "Clear", which also resets filters).
     page.main.find('#refresh-btn').on('click', function() {
         const $icon = $(this).find('i');
-        $icon.addClass('fa-spin');
+        // Own spin class/keyframes (see .lp-icon.lp-spin below) rather
+        // than Font Awesome's fa-spin - this page's fa-* icons don't
+        // render at all in this environment (icon font isn't loading),
+        // which is also why every icon above was switched to a plain
+        // emoji/Unicode character instead of an <i class="fa ..."> glyph.
+        $icon.addClass('lp-spin');
         loadLabs();
-        setTimeout(() => $icon.removeClass('fa-spin'), 600);
+        setTimeout(() => $icon.removeClass('lp-spin'), 600);
     });
 
     page.main.find('#filter-completed-btn').on('click', function() {
