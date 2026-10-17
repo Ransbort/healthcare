@@ -41,7 +41,13 @@ Schema notes:
 """
 import frappe
 from frappe import _
-from frappe.utils import today
+from frappe.utils import add_to_date, now_datetime, nowdate, nowtime, today
+
+from healthcare.healthcare.page.front_desk.front_desk import (
+	_patient_and_practitioner_names,
+	_resolve_duration,
+	get_default_appointment_type,
+)
 
 
 def _notify(event, payload):
@@ -148,6 +154,7 @@ def _normalize_direct_row(row):
 		"encounter_date": row.get("encounter_date"),
 		"practitioner": None,
 		"diagnosis": None,
+		"sent_to_doctor": row.get("sent_to_doctor"),
 		"source": "direct",
 	}
 
@@ -537,7 +544,8 @@ def get_completed_labs(search_patient=None, search_encounter=None, filter_date=N
 			lt.name AS custom_lab_test,
 			lt.patient AS patient,
 			lt.patient_name AS patient_name,
-			lt.modified AS encounter_date
+			lt.modified AS encounter_date,
+			lt.sent_to_doctor AS sent_to_doctor
 		FROM `tabLab Test` lt
 		LEFT JOIN `tabLab Test Template` ltt ON ltt.name = lt.template
 		WHERE {d_where}
@@ -550,6 +558,158 @@ def get_completed_labs(search_patient=None, search_encounter=None, filter_date=N
 	rows = encounter_rows + [_normalize_direct_row(r) for r in direct_rows]
 	_resolve_practitioner_names(rows)
 	return rows
+
+
+@frappe.whitelist()
+def send_lab_result_to_doctor(lab_test_name, practitioner):
+	"""For a walk-in/direct lab test (no Patient Encounter - the patient
+	came straight to the lab, never saw a doctor first) whose result is
+	in: create the Patient Encounter + Patient Appointment that walk-in
+	never had, with this result already attached to it, and put it in
+	the chosen practitioner's Doctor Station queue. This is the opposite
+	case from an ordinary doctor-ordered lab, which already has an
+	encounter (the doctor's own) and is excluded here via the
+	`lt.prescription IS NULL` check below - that one needs no new
+	encounter, just the doctor looking at the one they already have.
+
+	Doctor Station's queue (get_doctor_queue() in doctor_station.py) is
+	driven entirely off Patient Appointment (checked_in_at set,
+	queue_status != Completed) - a bare Patient Encounter with no
+	appointment behind it would never surface there - so a Patient
+	Appointment has to be created too, stamped straight to queue_status
+	"With Doctor" (skipping Payment Pending/Awaiting Vitals - nothing is
+	being billed through this flow, the lab was already paid for on its
+	own invoice).
+
+	The new Encounter is left as a draft, not submitted: submitting runs
+	make_service_request()/make_medication_request(), which would create
+	a brand new (redundant, half-wired) Service Request for the very lab
+	row this function just attached - the doctor reviews the result and
+	adds their own notes/diagnosis/prescriptions, then submits it
+	themselves when they're done, exactly like start_consultation() in
+	doctor_station.py already leaves every encounter it creates.
+
+	Linking lab_test.prescription to the new Lab Prescription row is what
+	makes this result show up as an ordinary encounter-sourced completed
+	lab (with encounter_id) on the next Completed Labs reload - so the
+	"Send to Doctor" button naturally disappears on its own without
+	needing separate gating logic; sent_to_doctor is kept as a secondary
+	marker only.
+
+	The "lab results visible in the patient encounter" half of the
+	original request is already handled by sports_complex's existing
+	"View Lab Results" button, installed on every Patient Encounter (see
+	healthcare_integration.ensure_view_lab_results_script) - it reads the
+	same custom_lab_test-linked Lab Prescription rows this function
+	creates, so the moment this function attaches one, that button
+	already shows the result - draft or submitted, it doesn't check
+	docstatus.
+	"""
+	if not practitioner:
+		frappe.throw(_("Choose a practitioner to send this result to."))
+
+	lab_test = frappe.get_doc("Lab Test", lab_test_name)
+
+	if lab_test.status != "Completed":
+		frappe.throw(_("Only a completed lab result can be sent to the doctor."))
+
+	if lab_test.prescription:
+		frappe.throw(_("This lab result is already linked to a patient encounter."))
+
+	department = frappe.db.get_value("Healthcare Practitioner", practitioner, "department")
+	appointment_type = get_default_appointment_type()
+	if not appointment_type:
+		frappe.throw(
+			_(
+				"No default Appointment Type is configured. Set one under "
+				"Healthcare Settings > Default Appointment Type before sending "
+				"walk-in lab results to a doctor."
+			)
+		)
+
+	duration = int(_resolve_duration(appointment_type))
+	appointment_datetime = f"{nowdate()} {nowtime()}"
+	appointment_end_datetime = add_to_date(appointment_datetime, minutes=duration)
+
+	appointment = frappe.get_doc({
+		"doctype": "Patient Appointment",
+		"patient": lab_test.patient,
+		"practitioner": practitioner,
+		"department": department,
+		"appointment_type": appointment_type,
+		"appointment_date": nowdate(),
+		"appointment_time": nowtime(),
+		"appointment_datetime": appointment_datetime,
+		"appointment_end_datetime": appointment_end_datetime,
+		"duration": duration,
+		"status": "Open",
+		# This appointment is manufactured on the spot to carry a
+		# finished lab result into the queue, not a real booked slot -
+		# see create_walkin_checkin()'s own use of this same flag in
+		# front_desk.py for why it has to be set to avoid colliding with
+		# the practitioner's actual schedule.
+		"appointment_based_on_check_in": 1,
+	})
+	appointment.insert(ignore_permissions=True)
+	appointment.db_set("checked_in_at", now_datetime())
+	appointment.db_set("queue_status", "With Doctor")
+	# Nothing is being billed through this flow - the lab was already
+	# invoiced on its own - so there's no consultation fee to chase.
+	# Marked invoiced to keep it off "Appointments to Bill" the same way
+	# _finalize_checkin() does in front_desk.py when nothing is owed.
+	appointment.db_set("invoiced", 1)
+
+	patient_name, practitioner_name = _patient_and_practitioner_names(lab_test.patient, practitioner)
+
+	encounter = frappe.get_doc({
+		"doctype": "Patient Encounter",
+		"patient": lab_test.patient,
+		"patient_name": patient_name,
+		"practitioner": practitioner,
+		"practitioner_name": practitioner_name,
+		"medical_department": department,
+		"appointment_type": appointment_type,
+		"appointment": appointment.name,
+		"encounter_date": nowdate(),
+		"encounter_time": nowtime(),
+	})
+	encounter.append("lab_test_prescription", {
+		"lab_test_code": lab_test.template,
+		"lab_test_comment": lab_test.lab_test_comment
+		or _("Result from a walk-in lab test, sent in by the lab technician."),
+		"invoiced": 1,
+	})
+	encounter.insert(ignore_permissions=True)
+
+	# custom_lab_test isn't declared on Lab Prescription's own doctype
+	# meta (it's a live-DB-only column on this site - see
+	# accept_lab_request() below, which sets it the same post-insert way
+	# rather than through the insert dict); setting it through
+	# encounter.append()'s dict would silently be dropped on insert since
+	# the meta doesn't recognize it as a valid field.
+	prescription_row = encounter.lab_test_prescription[0]
+	prescription_row.db_set("custom_lab_test", lab_test.name)
+
+	# Retroactively ties this Lab Test back to the row that now carries
+	# it, so every query that already distinguishes encounter-sourced
+	# from direct-sourced labs (get_completed_labs() above, and anything
+	# downstream of it) treats this one as encounter-sourced from here on.
+	lab_test.db_set("prescription", prescription_row.name)
+	lab_test.db_set("sent_to_doctor", 1)
+
+	patient_label = patient_name or lab_test.patient
+	lab_test_label = lab_test.template or lab_test.lab_test_name or lab_test_name
+
+	_notify(
+		"queue_update",
+		{
+			"department": "doctor",
+			"message": _("{0}'s {1} result is ready").format(patient_label, lab_test_label),
+			"encounter": encounter.name,
+		},
+	)
+
+	return {"encounter_id": encounter.name, "appointment": appointment.name}
 
 
 @frappe.whitelist()

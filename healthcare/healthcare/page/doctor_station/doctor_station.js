@@ -44,12 +44,32 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 		if (!['doctor', 'nurse', 'laboratory'].includes(data.department)) return;
 		if (data.department === 'doctor') {
 			playNotification();
+			// `encounter` isn't always set on this event (e.g. the plain
+			// "queue advanced" pings from Front Desk/Nurse Station carry
+			// none) - only add the click-through when there's actually
+			// somewhere for it to go. openEncounterDialog() is defined
+			// further down this same file (function declarations are
+			// hoisted), and send_lab_result_to_doctor() in lab_portal.py
+			// is what populates `encounter` for a walk-in lab result.
+			const openLink = data.encounter
+				? ` <a href="#" class="ds-open-encounter-alert" data-encounter="${frappe.utils.escape_html(data.encounter)}">${__('Open')}</a>`
+				: '';
 			frappe.show_alert({
-				message: data.message,
+				message: (data.message || '') + openLink,
 				indicator: 'blue'
-			}, 6);
+			}, 8);
 		}
 		loadAll();
+	});
+
+	// Delegated (not bound inside the handler above) since every
+	// queue_update toast is a fresh, short-lived DOM node created after
+	// this handler runs - binding here once covers all of them for the
+	// life of the page instead of attaching (and leaking) a new listener
+	// per toast.
+	$(document).on('click', '.ds-open-encounter-alert', function(e) {
+		e.preventDefault();
+		openEncounterDialog($(this).data('encounter'));
 	});
 
 	// Admission Order accept/reject outcome, targeted (server-side, via

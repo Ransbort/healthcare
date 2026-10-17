@@ -1676,6 +1676,17 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                                 <i class="fa fa-print"></i> Print
                             </button>
                             ` : ''}
+                            ${lab.custom_lab_test && !lab.encounter_id ? (
+                                lab.sent_to_doctor ? `
+                            <button class="btn btn-secondary" disabled>
+                                <i class="fa fa-check"></i> Sent to Doctor
+                            </button>
+                                ` : `
+                            <button class="btn btn-success btn-send-doctor">
+                                <i class="fa fa-paper-plane"></i> Send to Doctor
+                            </button>
+                                `
+                            ) : ''}
                         </div>
                     </div>
                 </div>
@@ -1690,6 +1701,13 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                 card.find('.btn-print-lab').on('click', function(e) {
                     e.stopPropagation();
                     showPrintDialog(lab.custom_lab_test);
+                });
+            }
+
+            if (lab.custom_lab_test && !lab.encounter_id && !lab.sent_to_doctor) {
+                card.find('.btn-send-doctor').on('click', function(e) {
+                    e.stopPropagation();
+                    sendLabResultToDoctor(lab.custom_lab_test);
                 });
             }
 
@@ -1731,6 +1749,17 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
                                     <i class="fa fa-print"></i> Print
                                 </button>
                             ` : '-'}
+                            ${lab.custom_lab_test && !lab.encounter_id ? (
+                                lab.sent_to_doctor ? `
+                                <button class="btn btn-secondary btn-sm" disabled>
+                                    <i class="fa fa-check"></i> Sent
+                                </button>
+                                ` : `
+                                <button class="btn btn-success btn-sm btn-send-doctor" data-lab-test="${lab.custom_lab_test}">
+                                    <i class="fa fa-paper-plane"></i> Send to Doctor
+                                </button>
+                                `
+                            ) : ''}
                         </div>
                     </td>
                 </tr>
@@ -1755,6 +1784,63 @@ frappe.pages['lab-portal'].on_page_load = function(wrapper) {
             const labTestName = $(this).data('lab-test');
             showPrintDialog(labTestName);
         });
+
+        container.find('.btn-send-doctor').on('click', function(e) {
+            e.stopPropagation();
+            const labTestName = $(this).data('lab-test');
+            sendLabResultToDoctor(labTestName);
+        });
+    }
+
+    // Shared by both Completed-tab views (cards and list). Only direct/
+    // walk-in results (no lab.encounter_id - the patient never saw a
+    // doctor, so there's no encounter for them to open) show this button
+    // in the first place; an ordinary doctor-ordered lab already has its
+    // own encounter and its ordering doctor already knows about it.
+    //
+    // Sending one asks which practitioner to route it to (there's no
+    // appointment yet to infer one from), then the backend creates a
+    // Patient Appointment + draft Patient Encounter with this result
+    // already attached and drops it into that practitioner's Doctor
+    // Station queue. The doctor sees the result via the "View Lab
+    // Results" button already present on every Patient Encounter
+    // (installed by sports_complex's ensure_view_lab_results_script) -
+    // nothing extra needed here for that part.
+    function sendLabResultToDoctor(labTestName) {
+        const dialog = new frappe.ui.Dialog({
+            title: __('Send to Doctor'),
+            fields: [
+                {
+                    fieldname: 'practitioner',
+                    fieldtype: 'Link',
+                    options: 'Healthcare Practitioner',
+                    label: __('Send To (Practitioner)'),
+                    reqd: 1
+                }
+            ],
+            primary_action_label: __('Send'),
+            primary_action: function(values) {
+                dialog.hide();
+                frappe.call({
+                    method: 'healthcare.healthcare.page.lab_portal.lab_portal.send_lab_result_to_doctor',
+                    args: { lab_test_name: labTestName, practitioner: values.practitioner },
+                    freeze: true,
+                    freeze_message: __('Sending to doctor...'),
+                    callback: function(r) {
+                        if (r.message) {
+                            frappe.show_alert({ message: __('Sent to doctor'), indicator: 'green' }, 5);
+                            loadCompletedLabs(
+                                search_patient_field.get_value(),
+                                search_encounter_field.get_value(),
+                                completed_date_field.get_value(),
+                                completed_to_date_field.get_value()
+                            );
+                        }
+                    }
+                });
+            }
+        });
+        dialog.show();
     }
 
     function showPrintDialog(lab_test_name) {

@@ -78,7 +78,8 @@
   "descriptive_toggle",
   "sensitivity_toggle",
   "amended_from",
-  "prescription"
+  "prescription",
+  "sent_to_doctor"
  ],
  "fields": [
   {
@@ -478,6 +479,17 @@
    "report_hide": 1
   },
   {
+   "default": "0",
+   "fieldname": "sent_to_doctor",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Sent To Doctor",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1,
+   "report_hide": 1
+  },
+  {
    "fieldname": "column_break_26",
    "fieldtype": "Column Break"
   },
@@ -648,7 +660,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-06-17 18:11:51.318190",
+ "modified": "2026-10-16 18:58:00.000000",
  "modified_by": "Administrator",
  "module": "Healthcare",
  "name": "Lab Test",
