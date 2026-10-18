@@ -140,6 +140,25 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 				color: var(--primary-color);
 			}
 
+			.ns-icon {
+				display: inline-block;
+				font-style: normal;
+			}
+
+			/* Stand-in for Font Awesome's fa-spin - that icon font isn't
+			   loading in this environment (same reason every fa fa-* icon
+			   on this page was swapped for a plain emoji/Unicode
+			   character below). One full turn, not infinite - the refresh
+			   click handler removes this class again after 600ms. */
+			@keyframes ns-icon-spin {
+				from { transform: rotate(0deg); }
+				to { transform: rotate(360deg); }
+			}
+
+			.ns-icon.ns-spin {
+				animation: ns-icon-spin 0.6s linear;
+			}
+
 			/* --- Last updated --- */
 			.ns-wrapper .last-updated {
 				display: flex;
@@ -349,7 +368,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 			<div class="sticky-header">
 				<div class="ns-toolbar">
 					<div class="ns-toolbar-title">
-						<div class="icon-badge"><i class="fa fa-stethoscope"></i></div>
+						<div class="icon-badge">🩺</div>
 						<div>
 							<h4>${__('Nurse Station')}</h4>
 							<div class="ns-toolbar-subtitle">${__('Vitals, admission orders & inpatient lookup')}</div>
@@ -357,27 +376,27 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 					</div>
 					<div class="ns-toolbar-actions">
 						<button class="btn-icon" id="ns-refresh-btn" title="${__('Refresh')}">
-							<i class="fa fa-refresh"></i>
+							<i class="ns-icon">🔄</i>
 						</button>
 					</div>
 				</div>
 
 				<div class="last-updated">
-					<i class="fa fa-clock-o"></i>
+					🕐
 					<span id="last-updated-time">${__('Not loaded yet')}</span>
 				</div>
 
 				<div class="tabs-section">
 					<button class="tab-btn active" data-tab="vitals">
-						<i class="fa fa-heartbeat"></i> ${__('Vitals Queue')}
+						💓 ${__('Vitals Queue')}
 						<span class="badge badge-info" id="vitals-count">0</span>
 					</button>
 					<button class="tab-btn" data-tab="admissions">
-						<i class="fa fa-bed"></i> ${__('Admission Orders')}
+						🛏️ ${__('Admission Orders')}
 						<span class="badge badge-warning" id="admissions-count">0</span>
 					</button>
 					<button class="tab-btn" data-tab="admitted">
-						<i class="fa fa-hospital-o"></i> ${__('Admitted Patients')}
+						🏥 ${__('Admitted Patients')}
 						<span class="badge" id="admitted-count">0</span>
 					</button>
 				</div>
@@ -391,10 +410,10 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 						<div data-fieldname="n_to_date" style="flex: 0 0 200px;"></div>
 						<div data-fieldname="n_queue_search" style="flex: 0 0 220px;"></div>
 						<button class="btn btn-primary" id="nurse-refresh-date-btn" style="flex-shrink: 0;">
-							<i class="fa fa-filter"></i> ${__('Filter')}
+							🔽 ${__('Filter')}
 						</button>
 						<button class="btn btn-clear-queue" id="nurse-clear-all-btn" style="flex-shrink: 0;">
-							<i class="fa fa-trash"></i> ${__('Clear All')}
+							🗑️ ${__('Clear All')}
 						</button>
 					</div>
 				</div>
@@ -416,7 +435,7 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 					<div class="search-input-group">
 						<div data-fieldname="admitted_patient"></div>
 						<button class="btn btn-primary" id="admitted-search-btn">
-							<i class="fa fa-search"></i> ${__('Search')}
+							🔍 ${__('Search')}
 						</button>
 						<button class="btn" id="admitted-clear-btn">${__('Clear')}</button>
 					</div>
@@ -509,9 +528,11 @@ frappe.pages['nurse-station'].on_page_load = function(wrapper) {
 
 	page.main.find('#ns-refresh-btn').on('click', function() {
 		const $icon = $(this).find('i');
-		$icon.addClass('fa-spin');
+		// .ns-spin (defined above), not Font Awesome's fa-spin - see the
+		// note by .ns-icon's CSS for why.
+		$icon.addClass('ns-spin');
 		loadAll();
-		setTimeout(() => $icon.removeClass('fa-spin'), 600);
+		setTimeout(() => $icon.removeClass('ns-spin'), 600);
 	});
 
 	// =============================================

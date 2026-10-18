@@ -177,6 +177,25 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 				color: var(--primary-color);
 			}
 
+			.ds-icon {
+				display: inline-block;
+				font-style: normal;
+			}
+
+			/* Stand-in for Font Awesome's fa-spin - that icon font isn't
+			   loading in this environment (same reason every fa fa-* icon
+			   on this page was swapped for a plain emoji/Unicode
+			   character below). One full turn, not infinite - the refresh
+			   click handler removes this class again after 600ms. */
+			@keyframes ds-icon-spin {
+				from { transform: rotate(0deg); }
+				to { transform: rotate(360deg); }
+			}
+
+			.ds-icon.ds-spin {
+				animation: ds-icon-spin 0.6s linear;
+			}
+
 			/* --- Last updated --- */
 			.ds-wrapper .last-updated {
 				display: flex;
@@ -318,7 +337,7 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 			<div class="sticky-header">
 				<div class="ds-toolbar">
 					<div class="ds-toolbar-title">
-						<div class="icon-badge"><i class="fa fa-user-md"></i></div>
+						<div class="icon-badge">⚕️</div>
 						<div>
 							<h4>${__('Doctor Station')}</h4>
 							<div class="ds-toolbar-subtitle">${__('Consultation queue & patient lookup')}</div>
@@ -326,23 +345,23 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 					</div>
 					<div class="ds-toolbar-actions">
 						<button class="btn-icon" id="ds-refresh-btn" title="${__('Refresh')}">
-							<i class="fa fa-refresh"></i>
+							<i class="ds-icon">🔄</i>
 						</button>
 					</div>
 				</div>
 
 				<div class="last-updated">
-					<i class="fa fa-clock-o"></i>
+					🕐
 					<span id="last-updated-time">${__('Not loaded yet')}</span>
 				</div>
 
 				<div class="tabs-section">
 					<button class="tab-btn active" data-tab="queue">
-						<i class="fa fa-stethoscope"></i> ${__('Doctor Queue')}
+						🩺 ${__('Doctor Queue')}
 						<span class="badge badge-info" id="queue-count">0</span>
 					</button>
 					<button class="tab-btn" data-tab="search">
-						<i class="fa fa-search"></i> ${__('Patient Search')}
+						🔍 ${__('Patient Search')}
 						<span class="badge" id="search-count">0</span>
 					</button>
 				</div>
@@ -355,7 +374,7 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 						<div data-fieldname="doc_date" style="flex: 0 0 200px;"></div>
 						<div data-fieldname="doc_to_date" style="flex: 0 0 200px;"></div>
 						<button class="btn btn-primary" id="doctor-refresh-date-btn" style="flex-shrink: 0;">
-							<i class="fa fa-filter"></i> ${__('Filter')}
+							🔽 ${__('Filter')}
 						</button>
 					</div>
 				</div>
@@ -370,7 +389,7 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 					<div class="search-input-group">
 						<div data-fieldname="patient_search"></div>
 						<button class="btn btn-primary" id="patient-search-btn">
-							<i class="fa fa-search"></i> ${__('Search')}
+							🔍 ${__('Search')}
 						</button>
 						<button class="btn" id="patient-search-clear-btn">${__('Clear')}</button>
 					</div>
@@ -452,9 +471,11 @@ frappe.pages['doctor-station'].on_page_load = function(wrapper) {
 
 	page.main.find('#ds-refresh-btn').on('click', function() {
 		const $icon = $(this).find('i');
-		$icon.addClass('fa-spin');
+		// .ds-spin (defined above), not Font Awesome's fa-spin - see the
+		// note by .ds-icon's CSS for why.
+		$icon.addClass('ds-spin');
 		loadAll();
-		setTimeout(() => $icon.removeClass('fa-spin'), 600);
+		setTimeout(() => $icon.removeClass('ds-spin'), 600);
 	});
 
 	// =============================================
